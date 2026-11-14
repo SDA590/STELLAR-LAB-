@@ -29,7 +29,7 @@ ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 CACHE_SECONDS = 0.8
 
 # Estado visible en /api/health
-status: dict = {"supabase": "disabled", "last_error": None}
+status: dict = {"supabase": "disabled", "last_error": None, "checkins": "disabled"}
 
 _cache: dict[tuple, tuple[float, list[dict]]] = {}
 
@@ -63,13 +63,23 @@ def parse_ts(value: str) -> float:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
 
 
-def _get(params: dict) -> list[dict]:
+def _request(table: str, params: dict, body: dict | None = None) -> list[dict]:
+    """GET (sin body) o POST (con body) a la API REST de Supabase."""
     base_url, key = _config()
-    url = f"{base_url}/rest/v1/telemetry?{urlencode(params)}"
+    url = f"{base_url}/rest/v1/{table}?{urlencode(params)}"
     # Las claves nuevas (sb_secret_...) van solo en el encabezado `apikey`.
-    request = Request(url, headers={"apikey": key, "Accept": "application/json"})
+    headers = {"apikey": key, "Accept": "application/json"}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        headers.update({"Content-Type": "application/json", "Prefer": "return=representation"})
+    request = Request(url, data=data, headers=headers, method="POST" if body is not None else "GET")
     with urlopen(request, timeout=4) as response:
-        return json.loads(response.read().decode("utf-8"))
+        return json.loads(response.read().decode("utf-8") or "[]")
+
+
+def _get(params: dict) -> list[dict]:
+    return _request("telemetry", params)
 
 
 def recent_rows(astronaut_id: str | None, window_s: float) -> list[dict]:
@@ -88,7 +98,7 @@ def recent_rows(astronaut_id: str | None, window_s: float) -> list[dict]:
     if cached and now - cached[0] < CACHE_SECONDS:
         return cached[1]
 
-    params = {"select": "*", "received_at": f"gte.{_iso(now - window_s)}", "order": "id.asc", "limit": 1000}
+    params = {"select": "*", "received_at": f"gte.{_iso(now - window_s)}", "order": "id.desc", "limit": 1000}
     if astronaut_id:
         params["astronaut_id"] = f"eq.{astronaut_id}"
     try:
@@ -101,7 +111,7 @@ def recent_rows(astronaut_id: str | None, window_s: float) -> list[dict]:
         return []
 
     clean: list[dict] = []
-    for row in rows:
+    for row in reversed(rows):  # se piden las más nuevas primero; aquí quedan de antigua a nueva
         row = dict(row)
         row.pop("id", None)
         row["source"] = "hardware"
@@ -114,3 +124,43 @@ def recent_rows(astronaut_id: str | None, window_s: float) -> list[dict]:
     status.update(supabase="ok", last_error=None)
     _cache[cache_key] = (now, clean)
     return clean
+
+
+# --------------------------------------------------------------------------- #
+# Chequeos diarios (tabla public.checkins). Solo el backend la usa, con la
+# clave secreta; el ESP32 no la toca. Si la tabla no existe, devuelve None y
+# main.py guarda en memoria como respaldo.
+# --------------------------------------------------------------------------- #
+def _checkins_error(exc: Exception) -> None:
+    if isinstance(exc, HTTPError) and exc.code == 404:
+        status["checkins"] = "missing_table"
+    else:
+        status["checkins"] = f"error: {getattr(exc, 'code', type(exc).__name__)}"
+
+
+def insert_checkin(row: dict) -> dict | None:
+    if not configured():
+        status["checkins"] = "disabled"
+        return None
+    try:
+        saved = _request("checkins", {"select": "*"}, row)
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+        _checkins_error(exc)
+        return None
+    status["checkins"] = "ok"
+    return saved[0] if saved else row
+
+
+def list_checkins(astronaut_id: str, since_ts: float) -> list[dict] | None:
+    if not configured():
+        status["checkins"] = "disabled"
+        return None
+    params = {"select": "*", "astronaut_id": f"eq.{astronaut_id}", "created_at": f"gte.{_iso(since_ts)}",
+              "order": "created_at.desc", "limit": 200}
+    try:
+        rows = _request("checkins", params)
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+        _checkins_error(exc)
+        return None
+    status["checkins"] = "ok"
+    return rows

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
-type MotionSample = { gx: number; gy: number; gz: number; respiration_rate_bpm: number | null; heart_rate_bpm: number | null }
+type MotionSample = { gx: number | null; gy: number | null; gz: number | null; respiration_rate_bpm: number | null; heart_rate_bpm: number | null }
 
 const routines = [
   { id: 'knee', name: 'Elevación de rodilla', duration: '06:00', target: 'Cadera y piernas', cue: 'Eleva la rodilla de forma controlada y conserva el tronco estable.' },
@@ -55,12 +55,12 @@ export default function ExerciseCoach({ sample }: { sample: MotionSample | null 
   }, [playing])
 
   const routine = routines[selected]
-  const motion = sample ? (sample.gx + sample.gy + sample.gz) * 1.8 : 0
+  const motion = sample ? ((sample.gx ?? 0) + (sample.gy ?? 0) + (sample.gz ?? 0)) * 1.8 : 0
   const alignment = Math.round(Math.max(62, 94 - Math.abs(motion) * 1.6))
-  const breathing = sample?.respiration_rate_bpm ?? 15.6
+  const breathing = sample?.respiration_rate_bpm ?? null
 
   return <section className="coach-page">
-    <div className="coach-heading"><div><span>STELLAR MOTION COACH</span><h2>Entrenamiento guiado en 3D</h2><p>Compara el movimiento recomendado con la estimación del sensor colocado en el pie.</p></div><div className="session-health"><b>{Math.round(sample?.heart_rate_bpm ?? 72)} bpm</b><span>FC durante ejercicio</span><b>{breathing.toFixed(1)} rpm</b><span>Respiración</span></div></div>
+    <div className="coach-heading"><div><span>STELLAR MOTION COACH</span><h2>Entrenamiento guiado en 3D</h2><p>Compara el movimiento recomendado con la estimación del sensor colocado en el pie.</p></div><div className="session-health"><b>{sample?.heart_rate_bpm != null ? Math.round(sample.heart_rate_bpm) : '—'} bpm</b><span>FC durante ejercicio</span><b>{breathing?.toFixed(1) ?? '—'} rpm</b><span>Respiración</span></div></div>
 
     <div className="coach-layout">
       <aside className="routine-list" aria-label="Rutinas disponibles">
@@ -79,7 +79,7 @@ export default function ExerciseCoach({ sample }: { sample: MotionSample | null 
 
       <aside className="coach-feedback">
         <span>RETROALIMENTACIÓN</span><h3>{alignment > 82 ? 'Movimiento estable' : 'Ajusta la postura'}</h3><div className="alignment-ring" style={{'--score': `${alignment * 3.6}deg`} as React.CSSProperties}><b>{alignment}</b><small>/100</small></div>
-        <ul><li><i className="ok"/>Ritmo controlado</li><li><i className="ok"/>Zona cardiaca estable</li><li><i className={breathing > 20 ? 'watch' : 'ok'}/>{breathing > 20 ? 'Reduce la intensidad' : 'Respiración uniforme'}</li></ul>
+        <ul><li><i className="ok"/>Ritmo controlado</li><li><i className="ok"/>Zona cardiaca estable</li><li><i className={(breathing ?? 0) > 20 ? 'watch' : 'ok'}/>{(breathing ?? 0) > 20 ? 'Reduce la intensidad' : 'Respiración uniforme'}</li></ul>
         <div className="safety-note"><b>Seguridad</b><p>Detén la rutina si aparece dolor, mareo o dificultad respiratoria y sigue el protocolo médico de la misión.</p></div>
       </aside>
     </div>

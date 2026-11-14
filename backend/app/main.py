@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from . import supabase_store
+from . import analysis, supabase_store
 
 supabase_store.load_env_file()
 
@@ -27,10 +27,11 @@ ASTRONAUTS: dict[str, dict[str, float]] = {
 }
 
 # Si un astronauta no envía datos reales en este tiempo, su ficha pasa a simulación.
-LIVE_WINDOW_S = 5
+# (10 s: el ESP32 hoy envía cada ~4 s; con 5 s el panel parpadeaba entre ESP32 y SIM.)
+LIVE_WINDOW_S = 10
 MAX_HISTORY = 240
-# Ventana de filas que se piden a Supabase para un astronauta (historial + margen).
-ASTRONAUT_WINDOW_S = MAX_HISTORY + LIVE_WINDOW_S + 5
+# Ventana de filas que se piden a Supabase para un astronauta (línea base de 10 min + margen).
+ASTRONAUT_WINDOW_S = analysis.BASELINE_WINDOW_S + LIVE_WINDOW_S + 5
 
 SESSION_COOKIE = "stellar_session"
 SESSION_DAYS = 7
@@ -64,6 +65,19 @@ class LoginIn(BaseModel):
     password: str
 
 
+class CheckinIn(BaseModel):
+    """Chequeo diario manual. Todos los campos son opcionales salvo el astronauta."""
+    astronaut_id: AstronautId
+    sleep_hours: float | None = Field(default=None, ge=0, le=24)
+    mood: int | None = Field(default=None, ge=1, le=5)
+    stress: int | None = Field(default=None, ge=1, le=5)
+    glucose_mg_dl: float | None = Field(default=None, ge=20, le=600)
+    systolic_mmhg: float | None = Field(default=None, ge=60, le=250)
+    diastolic_mmhg: float | None = Field(default=None, ge=30, le=150)
+    temperature_c: float | None = Field(default=None, ge=30, le=45)
+    notes: str | None = Field(default=None, max_length=500)
+
+
 app = FastAPI(title="STELLAR Health API", version="0.4.0")
 app.add_middleware(
     CORSMiddleware,
@@ -76,7 +90,9 @@ app.add_middleware(
 # Paquetes recibidos por POST /api/telemetry (ruta local directa al backend).
 # Solo vive en memoria: en Vercel no se comparte entre instancias, por eso allí
 # el ESP32 debe enviar a Supabase.
-local_packets: dict[str, deque[dict]] = {key: deque(maxlen=MAX_HISTORY + 20) for key in ASTRONAUTS}
+local_packets: dict[str, deque[dict]] = {key: deque(maxlen=analysis.BASELINE_WINDOW_S + 30) for key in ASTRONAUTS}
+# Respaldo de chequeos si la tabla `checkins` de Supabase no existe o falla.
+local_checkins: dict[str, deque[dict]] = {key: deque(maxlen=200) for key in ASTRONAUTS}
 
 
 # --------------------------------------------------------------------------- #
@@ -211,11 +227,11 @@ def current_sample(astronaut_id: str) -> dict:
     return simulated_sample(astronaut_id, now)
 
 
-def history(astronaut_id: str, limit: int) -> list[dict]:
+def timeline(astronaut_id: str, limit: int) -> list[dict]:
     """Una muestra por segundo de los últimos `limit` segundos.
 
     En cada segundo se usa la última fila real si el hardware estaba 'vivo' en ese
-    momento (llegó algo en los 5 s previos); si no, la simulación de ese segundo.
+    momento (llegó algo en los LIVE_WINDOW_S previos); si no, la simulación de ese segundo.
     """
     rows = real_rows(astronaut_id, ASTRONAUT_WINDOW_S)
     end = floor(time.time())
@@ -231,14 +247,24 @@ def history(astronaut_id: str, limit: int) -> list[dict]:
     return items
 
 
-def crew_summary(sample: dict) -> dict:
+def safe_baseline(samples: list[dict]) -> dict:
+    """La línea base nunca debe tumbar la API: si algo falla, queda 'calibrando'."""
+    try:
+        return analysis.baseline(samples)
+    except Exception:  # noqa: BLE001
+        return {"source": None, "window_s": analysis.BASELINE_WINDOW_S, "level": "calibrating", "signals": {}}
+
+
+def crew_summary(sample: dict, base: dict) -> dict:
     heart = sample.get("heart_rate_bpm")
     respiration = sample.get("respiration_rate_bpm")
-    movement = min(100, max(0, int(sample.get("steps", 0) % 101)))
+    movement = min(100, max(0, int((sample.get("steps") or 0) % 101)))
     if sample["source"] == "simulation":
         movement = int(ASTRONAUTS[sample["astronaut_id"]]["movement"])
-    observe = bool((heart and not 45 <= heart <= 105) or (respiration and not 8 <= respiration <= 24) or sample.get("leads_off"))
-    recovery = max(45, min(98, 94 - abs((heart or 72) - 72) - int(abs((respiration or 16) - 16) * 2)))
+    signals = list(base.get("signals", {}).values())
+    observe = base.get("level") in ("observe", "alert", "unreliable")
+    z_total = sum(abs(s["z"]) for s in signals if s.get("z") is not None)
+    recovery = max(45, min(98, round(96 - 8 * z_total)))
     return {
         "astronaut_id": sample["astronaut_id"],
         "source": sample["source"],
@@ -247,6 +273,8 @@ def crew_summary(sample: dict) -> dict:
         "movement_score": movement,
         "recovery_score": recovery,
         "status": "Observe" if observe else "Stable",
+        "level": base.get("level"),
+        "reasons": [s["message"] for s in signals if s.get("level") in ("observe", "alert", "unreliable")],
         "received_at": sample["received_at"],
     }
 
@@ -263,6 +291,7 @@ def health() -> dict:
         "service": "stellar-health-api",
         "crew_nodes": len(ASTRONAUTS),
         "password_required": bool(app_password()),
+        "live_window_s": LIVE_WINDOW_S,
         **supabase_store.status,
     }
 
@@ -275,20 +304,80 @@ def state(astronaut_id: AstronautId = "bresnik") -> dict:
 @app.get("/api/history")
 def get_history(astronaut_id: AstronautId = "bresnik", limit: int = 120) -> dict:
     limit = max(1, min(limit, MAX_HISTORY))
-    return {"astronaut_id": astronaut_id, "items": history(astronaut_id, limit)}
+    samples = timeline(astronaut_id, analysis.BASELINE_WINDOW_S)
+    return {"astronaut_id": astronaut_id, "items": samples[-limit:], "baseline": safe_baseline(samples)}
+
+
+@app.get("/api/baseline")
+def get_baseline(astronaut_id: AstronautId = "bresnik") -> dict:
+    return safe_baseline(timeline(astronaut_id, analysis.BASELINE_WINDOW_S))
 
 
 @app.get("/api/crew")
 def get_crew() -> dict:
-    live_rows = real_rows(None, LIVE_WINDOW_S)
-    latest = {row["astronaut_id"]: row for row in live_rows}  # la última fila gana
-    now = time.time()
     items = []
     for astronaut_id in ASTRONAUTS:
-        row = latest.get(astronaut_id)
-        sample = public(row) if row else simulated_sample(astronaut_id, now)
-        items.append(crew_summary(sample))
+        samples = timeline(astronaut_id, analysis.BASELINE_WINDOW_S)
+        items.append(crew_summary(samples[-1], safe_baseline(samples)))
     return {"items": items}
+
+
+# --------------------------------------------------------------------------- #
+# Chequeo diario manual y signos vitales periódicos
+# --------------------------------------------------------------------------- #
+def checkins_for(astronaut_id: str, days: float) -> tuple[list[dict], str]:
+    """Chequeos de los últimos `days` días (más nuevo primero) y dónde están guardados."""
+    since = time.time() - days * 86400
+    rows = supabase_store.list_checkins(astronaut_id, since)
+    if rows is not None:
+        return rows, "supabase"
+    local = [r for r in local_checkins[astronaut_id] if supabase_store.parse_ts(r["created_at"]) >= since]
+    return sorted(local, key=lambda r: r["created_at"], reverse=True), "memory"
+
+
+@app.post("/api/checkin")
+def post_checkin(body: CheckinIn) -> dict:
+    row = body.model_dump()
+    if body.notes is not None:
+        row["notes"] = body.notes.strip() or None
+    saved = supabase_store.insert_checkin(row)
+    if saved is not None:
+        return {"saved": True, "storage": "supabase", "item": saved}
+    row["created_at"] = datetime.now(timezone.utc).isoformat()
+    local_checkins[body.astronaut_id].append(row)
+    return {"saved": True, "storage": "memory", "item": row}
+
+
+@app.get("/api/checkins")
+def get_checkins(astronaut_id: AstronautId = "bresnik", days: float = 7) -> dict:
+    items, storage = checkins_for(astronaut_id, max(0.1, min(days, 60)))
+    return {"astronaut_id": astronaut_id, "storage": storage, "items": items}
+
+
+@app.get("/api/vitals")
+def get_vitals(astronaut_id: AstronautId = "bresnik") -> dict:
+    """Presión y temperatura: simuladas cada 30 min + lo que el astronauta anotó a mano."""
+    now = time.time()
+    items = analysis.simulated_vitals(astronaut_id, now)
+    since = items[0]["ts"]
+    manual, _ = checkins_for(astronaut_id, 1)
+    for row in manual:
+        if row.get("systolic_mmhg") is None and row.get("temperature_c") is None:
+            continue
+        ts = supabase_store.parse_ts(row["created_at"])
+        if ts >= since:
+            items.append(analysis.vitals_item(ts, "manual", row.get("systolic_mmhg"), row.get("diastolic_mmhg"), row.get("temperature_c")))
+    items.sort(key=lambda r: r["ts"])
+    latest_bp = next((r for r in reversed(items) if r["systolic_mmhg"] is not None), None)
+    latest_temp = next((r for r in reversed(items) if r["temperature_c"] is not None), None)
+    return {
+        "astronaut_id": astronaut_id,
+        "interval_min": analysis.VITALS_INTERVAL_S // 60,
+        "next_ts": (int(now // analysis.VITALS_INTERVAL_S) + 1) * analysis.VITALS_INTERVAL_S,
+        "latest_bp": latest_bp,
+        "latest_temp": latest_temp,
+        "items": items,
+    }
 
 
 @app.post("/api/telemetry")
