@@ -6,7 +6,10 @@ import CrewCommand from './CrewCommand'
 import SettingsPanel from './SettingsPanel'
 import { profiles, type CrewProfile } from './profiles'
 import { apiFetch } from './api'
-import { levelInfo, type Baseline, type SignalBaseline, type Vitals } from './health'
+import { levelInfo, type Alert, type Baseline, type SignalBaseline, type Vitals } from './health'
+import Icon, { type IconName } from './Icon'
+import Alerts from './Alerts'
+import MissionControl from './MissionControl'
 
 type Sample = {
   astronaut_id: string; source: 'simulation' | 'hardware'; received_at: string; ecg_raw: number; leads_off: boolean;
@@ -15,7 +18,21 @@ type Sample = {
   pos_x_m: number | null; pos_y_m: number | null; area_m2: number | null; steps: number | null; battery_pct: number | null;
 }
 
-const navIcons: Record<string, string> = { Dashboard: '⌁', Monitoring: '⌇', 'Crew Command': '▦', 'Exercise Coach': '◇', Wellness: '◌', 'Crew Profile': '◉', 'Health Analytics': '↗', Alerts: '△', 'Mission Control': '✦', Settings: '⚙', 'System Settings': '⚙' }
+// Pantallas: la clave interna sigue en inglés; el texto visible sigue el diseño de Choy (español).
+const SCREENS: Record<string, { label: string; icon: IconName; subtitle: string }> = {
+  Dashboard: { label: 'Panel principal', icon: 'inicio', subtitle: 'Tu salud frente a tu propia línea base' },
+  Monitoring: { label: 'Monitorización', icon: 'monitorizacion', subtitle: 'Tus signos vitales en tiempo real' },
+  Wellness: { label: 'Bienestar', icon: 'bienestar', subtitle: 'Tu equilibrio en la misión: chequeo diario y recuperación' },
+  'Exercise Coach': { label: 'Entrenamiento', icon: 'entrenamiento', subtitle: 'Rutinas guiadas contra la pérdida de músculo y hueso' },
+  'Crew Profile': { label: 'Mi perfil', icon: 'perfil', subtitle: 'Datos del tripulante' },
+  'Health Analytics': { label: 'Análisis de salud', icon: 'analisis', subtitle: 'Tendencias a largo plazo' },
+  Alerts: { label: 'Alertas', icon: 'alertas', subtitle: 'Qué cambió, por qué y qué hacer' },
+  Settings: { label: 'Configuración', icon: 'configuracion', subtitle: 'Preferencias del perfil' },
+  'Crew Command': { label: 'Gestión de tripulación', icon: 'tripulacion', subtitle: 'Estado de toda la tripulación (solo lectura)' },
+  'Mission Control': { label: 'Control de misión', icon: 'control-mision', subtitle: 'Reportes automáticos para los médicos en Tierra' },
+  'System Settings': { label: 'Configuración del sistema', icon: 'chip', subtitle: 'Parámetros técnicos' },
+}
+const screen = (key: string) => SCREENS[key] ?? { label: key, icon: 'destello-ia' as IconName, subtitle: '' }
 
 /** Gráfico de línea. `band` dibuja la franja "normal" de la línea base personal. */
 function Line({ values, color = '#58e6c2', band }: { values: (number | null)[]; color?: string; band?: { low: number | null; high: number | null } }) {
@@ -43,8 +60,8 @@ function Line({ values, color = '#58e6c2', band }: { values: (number | null)[]; 
   </svg>
 }
 
-function Metric({ label, value, unit, note, tone = 'mint', tag }: { label: string; value: string | number; unit?: string; note: string; tone?: string; tag?: string }) {
-  return <article className={`metric ${tone}`}><div className="metric-top"><span>{label}</span>{tag ? <em className="metric-tag">{tag}</em> : <i />}</div><strong>{value}<small>{unit}</small></strong><p>{note}</p></article>
+function Metric({ label, value, unit, note, tone = 'mint', tag, icon }: { label: string; value: string | number; unit?: string; note: string; tone?: string; tag?: string; icon?: IconName }) {
+  return <article className={`metric ${tone}`}><div className="metric-top"><span>{icon && <Icon name={icon} size={18} />}{label}</span>{tag ? <em className="metric-tag">{tag}</em> : <i />}</div><strong>{value}<small>{unit}</small></strong><p>{note}</p></article>
 }
 
 function signalNote(signal?: SignalBaseline) {
@@ -64,6 +81,21 @@ export default function App() {
   const [baseline, setBaseline] = useState<Baseline | null>(null)
   const [vitals, setVitals] = useState<Vitals | null>(null)
   const [connected, setConnected] = useState(false)
+  const [alerts, setAlerts] = useState<Alert[]>([])
+  const [clock, setClock] = useState(() => new Date())
+
+  useEffect(() => { const t = window.setInterval(() => setClock(new Date()), 1000); return () => window.clearInterval(t) }, [])
+
+  // Alertas: cada 5 s (combinan línea base, vitales y chequeo diario).
+  useEffect(() => {
+    if (!profile || profile.access === 'nasa') { setAlerts([]); return }
+    let alive = true
+    const load = async () => {
+      try { const res = await apiFetch(`/api/alerts?astronaut_id=${profile.id}`); if (res.ok && alive) setAlerts((await res.json()).items) } catch { /* sin cambios */ }
+    }
+    load(); const timer = window.setInterval(load, 5000)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [profile?.id, profile?.access, active])
 
   useEffect(() => {
     if (!profile || profile.access === 'nasa') return
@@ -108,38 +140,57 @@ export default function App() {
   const sourceTag = (source?: string) => source === 'manual' ? 'MANUAL' : 'SIMULADO'
   const issues = [hrBase, rrBase].filter(s => s && ['observe', 'alert', 'unreliable'].includes(s.level)) as SignalBaseline[]
 
-  if (!profile) return <ProfilePicker profiles={profiles} onSelect={selected => { setProfile(selected); setActive(selected.access === 'nasa' ? 'System Settings' : 'Dashboard') }} />
+  if (!profile) return <ProfilePicker profiles={profiles} onSelect={selected => { setProfile(selected); setActive(selected.access === 'nasa' ? 'Mission Control' : 'Dashboard') }} />
 
   const crew = profiles.filter(item => item.access !== 'nasa')
-  const nav = profile.access === 'nasa' ? ['System Settings'] : ['Dashboard', 'Monitoring', ...(profile.access === 'captain' ? ['Crew Command'] : []), 'Exercise Coach', 'Wellness', 'Crew Profile', 'Health Analytics', 'Alerts', 'Mission Control', 'Settings']
+  const nav = profile.access === 'nasa' ? [] : ['Dashboard', 'Monitoring', 'Wellness', 'Exercise Coach', 'Crew Profile', 'Health Analytics', 'Alerts', 'Settings']
+  const authorized = profile.access === 'nasa' ? ['Mission Control', 'System Settings'] : profile.access === 'captain' ? ['Crew Command', 'Mission Control'] : []
+  const activeAlerts = alerts.filter(a => a.level >= 1)
+  const maxLevel = Math.max(0, ...alerts.map(a => a.level))
+  const lastSync = sample ? Math.max(0, Math.round((clock.getTime() - Date.parse(sample.received_at)) / 1000)) : null
+  const navButton = (item: string) => <button className={active === item ? 'active' : ''} onClick={() => setActive(item)} key={item}>
+    <Icon name={screen(item).icon} size={20} />{screen(item).label}
+    {item === 'Alerts' && activeAlerts.length > 0 && <span className={`nav-badge ${maxLevel >= 3 ? 'crit' : ''}`}>{activeAlerts.length}</span>}
+  </button>
+  const topAlert = activeAlerts[0]
 
   return <div className="app-shell">
     <aside>
-      <div className="brand"><div className="mark">S</div><div><b>STELLAR</b><span>HEALTH SYSTEM</span></div></div>
-      <nav>{nav.map(item => <button className={active === item ? 'active' : ''} onClick={() => setActive(item)} key={item}><span>{navIcons[item]}</span>{item}</button>)}</nav>
-      <div className="mission-card"><span>NASA SPACE APPS 2026</span><b>LONG-DURATION CREW 01</b><div><i /> Onboard systems nominal</div></div>
-      <button className="switch-profile" onClick={() => setProfile(null)}>{profile.photo ? <img src={profile.photo} alt="" /> : <span>{profile.initials}</span>}<div><b>{profile.shortName}</b><small>Switch profile</small></div><i>↗</i></button>
-      <p className="version">STELLAR LAB · Prototype v0.3 · No es un dispositivo médico</p>
+      <div className="brand"><img src="/brand/logo-cian.svg" alt="" /><b>STELLAR<em>Health</em></b></div>
+      <nav>{nav.map(navButton)}</nav>
+      {authorized.length > 0 && <><p className="nav-section">PERSONAL AUTORIZADO</p><nav>{authorized.map(navButton)}</nav></>}
+      <div className="sync-card"><div><b className={connected ? '' : 'off'}><i />{connected ? (sample?.source === 'hardware' ? 'ESP32 conectado' : 'Conectado · simulación') : profile.access === 'nasa' ? 'Estación de Tierra' : 'Sin conexión'}</b>{lastSync != null && <span>Última lectura: hace {lastSync} s</span>}</div><Icon name="senal" size={22} /></div>
+      <p className="version">STELLAR LAB · v0.4 · No es un dispositivo médico</p>
     </aside>
 
     <main>
-      <header><div><p>{profile.access === 'nasa' ? 'MISSION SYSTEMS' : 'CREW HEALTH'} / {active.toUpperCase()}</p><h1>{active}</h1></div><div className="header-actions"><span className={`access-badge access-${profile.access}`}>{profile.access === 'captain' ? 'COMMANDER ACCESS' : profile.access === 'nasa' ? 'NASA TECH' : 'PERSONAL VIEW'}</span><span className={`status ${connected ? '' : 'offline'}`}><i />{connected ? (sample?.source === 'hardware' ? 'ESP32 conectado' : 'Simulación local') : 'API desconectada'}</span><button aria-label="Notificaciones">⌁</button><button className="avatar" onClick={() => setProfile(null)} aria-label="Cambiar perfil">{profile.initials}</button></div></header>
+      <div className="topbar">
+        <div className="mission"><Icon name="cohete" size={26} /><div><b>Misión STELLAR-01</b><small>Tripulación de larga duración</small></div></div>
+        <span className="divider" />
+        <span className={`sys ${!connected && profile.access !== 'nasa' ? 'off' : sample?.source === 'hardware' ? '' : 'sim'}`}><i />{profile.access === 'nasa' ? 'Enlace con el hábitat' : !connected ? 'API desconectada' : sample?.source === 'hardware' ? 'Sistema en línea · ESP32' : 'Sistema en línea · simulación'}</span>
+        <span className="divider" />
+        <span className="clock"><Icon name="reloj" size={18} />{clock.toISOString().slice(11, 16)} UTC</span>
+        <span className="spacer" />
+        {profile.access !== 'nasa' && <button className="bell" aria-label="Alertas" onClick={() => setActive('Alerts')}><Icon name="alertas" size={18} />{activeAlerts.length > 0 && <em className={maxLevel >= 3 ? 'crit' : ''}>{activeAlerts.length}</em>}</button>}
+        <button className="who" onClick={() => setProfile(null)} aria-label="Cambiar perfil">{profile.photo ? <img src={profile.photo} alt="" /> : <span className="ini">{profile.initials}</span>}<div><b>{profile.name}</b><small>{profile.role} · cambiar perfil</small></div><Icon name="chevron-abajo" size={14} /></button>
+      </div>
+      <div className="page-title"><Icon name={screen(active).icon} size={40} /><div><h1>{screen(active).label}</h1><p>{screen(active).subtitle}</p></div><span className={`access-badge access-${profile.access}`}>{profile.access === 'captain' ? 'ACCESO COMANDANTE' : profile.access === 'nasa' ? 'EQUIPO MÉDICO · TIERRA' : 'VISTA PERSONAL'}</span></div>
 
-      {active === 'Crew Command' && profile.access === 'captain' ? <CrewCommand crew={crew} /> : active === 'Exercise Coach' ? <ExerciseCoach sample={sample} /> : active === 'Wellness' ? <WellnessCheck astronautId={profile.id} /> : active === 'Settings' || active === 'System Settings' ? <SettingsPanel profile={profile} /> : active !== 'Dashboard' && active !== 'Monitoring' ? <section className="placeholder">
-        <span>{navIcons[active]}</span><p>STELLAR HEALTH</p><h2>{active}</h2><div className="rule" />
+      {active === 'Crew Command' && profile.access === 'captain' ? <CrewCommand crew={crew} /> : active === 'Mission Control' && profile.access !== 'crew' ? <MissionControl crew={crew} /> : active === 'Alerts' ? <Alerts alerts={alerts} onOpen={setActive} /> : active === 'Exercise Coach' ? <ExerciseCoach sample={sample} /> : active === 'Wellness' ? <WellnessCheck astronautId={profile.id} /> : active === 'Settings' || active === 'System Settings' ? <SettingsPanel profile={profile} /> : active !== 'Dashboard' && active !== 'Monitoring' ? <section className="placeholder">
+        <span><Icon name={screen(active).icon} size={34} /></span><p>STELLAR HEALTH</p><h2>{screen(active).label}</h2><div className="rule" />
         <p>Este módulo forma parte de la arquitectura prevista. En el siguiente ciclo conectaremos sus datos, reglas y flujos específicos.</p>
-        <button onClick={() => setActive('Dashboard')}>Volver al Dashboard</button>
+        <button onClick={() => setActive('Dashboard')}>Volver al panel principal</button>
       </section> : <>
         <section className="challenge-strip"><span>RECOPILAR</span><i/> <span>EVALUAR</span><i/> <span>ACTUAR</span><p>Reto NASA Space Apps 2026 · Health Monitoring Software · Prototipo educativo, no es un dispositivo médico</p></section>
-        <section className="intro"><div><span>{profile.name.toUpperCase()} · {profile.role.toUpperCase()} · MISSION DAY 042</span><h2>My health and movement</h2><p>Heart, respiration and movement compared with your personal baseline.</p></div><div className={`risk level-${baseline?.level ?? 'calibrating'}`}><i /> Estado actual <strong>{overall.label.toUpperCase()}</strong></div></section>
+        <section className="intro"><div><span>{profile.name.toUpperCase()} · {profile.role.toUpperCase()} · DÍA DE MISIÓN 042</span><h2>Hola, {profile.shortName}</h2><p>Pulso, respiración y movimiento comparados con tu propia línea base.</p></div><div className={`risk level-${maxLevel >= 3 ? 'alert' : maxLevel === 2 ? 'observe' : baseline?.level ?? 'calibrating'}`}><i /> Estado actual <strong>{maxLevel >= 3 ? 'CRÍTICO · NIVEL 3' : maxLevel === 2 ? 'ATENCIÓN · NIVEL 2' : overall.label.toUpperCase()}</strong></div></section>
 
         <section className="metrics six">
-          <Metric label="Frecuencia cardiaca" value={hr ?? '—'} unit=" bpm" note={signalNote(hrBase)} tone={levelInfo(hrBase?.level).tone} tag={levelInfo(hrBase?.level).short} />
-          <Metric label="Frecuencia respiratoria" value={respirationRate?.toFixed(1) ?? '—'} unit=" rpm" note={signalNote(rrBase)} tone={levelInfo(rrBase?.level).tone} tag={levelInfo(rrBase?.level).short} />
-          <Metric label="Presión arterial" value={bp ? `${bp.systolic_mmhg}/${bp.diastolic_mmhg ?? '—'}` : '—'} unit=" mmHg" note={bp ? `${bp.bp_label ?? ''} · ${sourceTag(bp.source).toLowerCase()} ${timeLabel(bp.ts)}` : 'Sin medición'} tone={bp?.bp_label === 'normal' ? 'mint' : 'amber'} tag={bp ? sourceTag(bp.source) : undefined} />
-          <Metric label="Temperatura" value={temp?.temperature_c?.toFixed(1) ?? '—'} unit=" °C" note={temp ? `${temp.temp_label ?? ''} · ${sourceTag(temp.source).toLowerCase()} ${timeLabel(temp.ts)}` : 'Sin medición'} tone={temp?.temp_label === 'normal' ? 'cyan' : 'amber'} tag={temp ? sourceTag(temp.source) : undefined} />
-          <Metric label="Señal ECG" value={sample?.leads_off ? 'OFF' : (sample?.ecg_raw ?? '—')} unit=" raw" note={sample?.leads_off ? 'Lectura poco confiable: revisa los electrodos' : 'Electrodos detectados'} tone={sample?.leads_off ? 'gray' : 'blue'} />
-          <Metric label="Batería Node" value={sample?.battery_pct ?? '—'} unit={sample?.battery_pct == null ? '' : ' %'} note={sample?.battery_pct == null ? 'Sin sensor de batería' : sample.source === 'hardware' ? 'Reportada por el ESP32' : 'Simulada'} tone="violet" />
+          <Metric icon="corazon" label="Frecuencia cardiaca" value={hr ?? '—'} unit=" bpm" note={signalNote(hrBase)} tone={levelInfo(hrBase?.level).tone} tag={levelInfo(hrBase?.level).short} />
+          <Metric icon="pulmones" label="Frecuencia respiratoria" value={respirationRate?.toFixed(1) ?? '—'} unit=" rpm" note={signalNote(rrBase)} tone={levelInfo(rrBase?.level).tone} tag={levelInfo(rrBase?.level).short} />
+          <Metric icon="gota" label="Presión arterial" value={bp ? `${bp.systolic_mmhg}/${bp.diastolic_mmhg ?? '—'}` : '—'} unit=" mmHg" note={bp ? `${bp.bp_label ?? ''} · ${sourceTag(bp.source).toLowerCase()} ${timeLabel(bp.ts)}` : 'Sin medición'} tone={bp?.bp_label === 'normal' ? 'mint' : 'amber'} tag={bp ? sourceTag(bp.source) : undefined} />
+          <Metric icon="termometro" label="Temperatura" value={temp?.temperature_c?.toFixed(1) ?? '—'} unit=" °C" note={temp ? `${temp.temp_label ?? ''} · ${sourceTag(temp.source).toLowerCase()} ${timeLabel(temp.ts)}` : 'Sin medición'} tone={temp?.temp_label === 'normal' ? 'cyan' : 'amber'} tag={temp ? sourceTag(temp.source) : undefined} />
+          <Metric icon="senal" label="Señal ECG" value={sample?.leads_off ? 'OFF' : (sample?.ecg_raw ?? '—')} unit=" raw" note={sample?.leads_off ? 'Lectura poco confiable: revisa los electrodos' : 'Electrodos detectados'} tone={sample?.leads_off ? 'gray' : 'blue'} />
+          <Metric icon="chip" label="Batería Node" value={sample?.battery_pct ?? '—'} unit={sample?.battery_pct == null ? '' : ' %'} note={sample?.battery_pct == null ? 'Sin sensor de batería' : sample.source === 'hardware' ? 'Reportada por el ESP32' : 'Simulada'} tone="violet" />
         </section>
 
         <section className="data-grid">
@@ -149,10 +200,13 @@ export default function App() {
           <article className="panel respiration-panel"><div className="panel-head"><div><span>RESPIRACIÓN · DERIVADA DEL ECG</span><h3>Ciclo de respiración</h3></div><b>{respirationRate?.toFixed(1) ?? '—'} rpm</b></div><Line values={respiration} color="#56d9ef" /><div className="chart-meta"><span>ESTIMADA DESDE EL ECG (EDR)</span><span>{sample?.source === 'hardware' ? 'ESP32' : 'SIMULACIÓN'}</span><span>{levelInfo(rrBase?.level).label.toUpperCase()}</span></div></article>
           <article className="panel footprint"><div className="panel-head"><div><span>IMU / MPU6050</span><h3>Zona de movimiento</h3></div><b>{sample?.area_m2?.toFixed(2) ?? '0.00'} m²</b></div><div className="map"><div className="orbit one"/><div className="orbit two"/><div className="trail"/><div className="dot" style={{left: `${50 + Math.min(38, Math.max(-38, (sample?.pos_x_m ?? 0) * 15))}%`, top: `${50 + Math.min(35, Math.max(-35, (sample?.pos_y_m ?? 0) * 18))}%`}}><i/></div><span className="axis x">X</span><span className="axis y">Y</span></div><p>Estimación 2D con corrección de reposo. La deriva del IMU se reinicia desde Arduino IDE.</p></article>
           <article className="panel motion"><div className="panel-head"><div><span>MOVIMIENTO</span><h3>Aceleración del pie</h3></div><b>{hasImu && sample ? Math.sqrt((sample.ax ?? 0) ** 2 + (sample.ay ?? 0) ** 2 + (sample.az ?? 0) ** 2).toFixed(2) : '—'} m/s²</b></div><Line values={movement} color="#ffb55c" /><div className="vectors"><span>AX <b>{sample?.ax?.toFixed(2) ?? '—'}</b></span><span>AY <b>{sample?.ay?.toFixed(2) ?? '—'}</b></span><span>AZ <b>{sample?.az?.toFixed(2) ?? '—'}</b></span></div></article>
-          <article className={`panel insight level-${baseline?.level ?? 'calibrating'}`}><span>STELLAR AI · EVALUAR Y ACTUAR</span><h3>{overall.title}</h3>
-            {issues.length ? <ul className="insight-reasons">{issues.map(s => <li key={s.label}>{s.message}</li>)}</ul> : <p>{baseline?.level === 'calibrating' ? 'Reuniendo tus primeras lecturas para conocer tu normal. Tarda menos de un minuto.' : 'Tus señales están dentro de tu propia línea base (no de un promedio general).'}</p>}
+          <article className={`panel insight level-${topAlert ? (topAlert.level >= 3 ? 'alert' : topAlert.level === 2 ? 'observe' : baseline?.level ?? 'normal') : baseline?.level ?? 'calibrating'}`}><span>STELLAR AI · EVALUAR Y ACTUAR</span>
+            <h3>{topAlert ? `${topAlert.level_title}: ${topAlert.title}` : overall.title}</h3>
+            {topAlert ? <><p>{topAlert.reason}</p><p><b>Qué hacer:</b> {topAlert.actions[0]}</p></>
+              : issues.length ? <ul className="insight-reasons">{issues.map(s => <li key={s.label}>{s.message}</li>)}</ul>
+              : <p>{baseline?.level === 'calibrating' ? 'Reuniendo tus primeras lecturas para conocer tu normal. Tarda menos de un minuto.' : 'Tus señales están dentro de tu propia línea base (no de un promedio general).'}</p>}
             <p className="insight-method">Cómo se calcula: {baseline?.method ?? 'mediana de tus últimos 10 min ± 2 desviaciones'}.</p>
-            <button onClick={() => setActive(issues.length ? 'Wellness' : 'Exercise Coach')}>{issues.length ? 'Registrar cómo me siento' : 'Abrir rutina recomendada'}</button><div><i /> Revisión automática en curso</div></article>
+            <button onClick={() => setActive(activeAlerts.length ? 'Alerts' : 'Exercise Coach')}>{activeAlerts.length ? `Ver ${activeAlerts.length} alerta${activeAlerts.length > 1 ? 's' : ''} y qué hacer` : 'Abrir rutina recomendada'}</button><div><i /> Revisión automática cada 5 s</div></article>
         </section>
       </>}
     </main>

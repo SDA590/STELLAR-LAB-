@@ -38,3 +38,18 @@ const LEVELS: Record<Level, { label: string; short: string; tone: string; title:
 export function levelInfo(level?: Level | null) {
   return LEVELS[level ?? 'calibrating'] ?? LEVELS.calibrating
 }
+
+export type Alert = {
+  id: string; level: 0 | 1 | 2 | 3; level_title: string; who: string; title: string; reason: string
+  actions: string[]; hazard: string; link: 'Wellness' | 'Exercise Coach' | null; evidence: string[]
+}
+
+export type Report = {
+  astronaut_id: string; generated_ts: number; trigger: string; priority: string; max_level: number
+  data_source: { ecg: string | null; vitals: string | null; checkin: string | null }
+  summary: Partial<Record<'heart_rate_bpm' | 'respiration_rate_bpm', { base: number | null; now: number | null; level: Level; z: number | null }>>
+  vitals: { bp: VitalsItem | null; temp: VitalsItem | null }
+  checkin: Checkin | null
+  alerts: { level: number; title: string; reason: string }[]
+  recommendation: string; size_bytes: number; raw_bytes: number
+}

@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from . import analysis, supabase_store
+from . import alerts, analysis, supabase_store
 
 supabase_store.load_env_file()
 
@@ -357,10 +357,13 @@ def get_checkins(astronaut_id: AstronautId = "bresnik", days: float = 7) -> dict
 @app.get("/api/vitals")
 def get_vitals(astronaut_id: AstronautId = "bresnik") -> dict:
     """Presión y temperatura: simuladas cada 30 min + lo que el astronauta anotó a mano."""
+    return vitals_for(astronaut_id, checkins_for(astronaut_id, 1)[0])
+
+
+def vitals_for(astronaut_id: str, manual: list[dict]) -> dict:
     now = time.time()
     items = analysis.simulated_vitals(astronaut_id, now)
     since = items[0]["ts"]
-    manual, _ = checkins_for(astronaut_id, 1)
     for row in manual:
         if row.get("systolic_mmhg") is None and row.get("temperature_c") is None:
             continue
@@ -378,6 +381,39 @@ def get_vitals(astronaut_id: AstronautId = "bresnik") -> dict:
         "latest_temp": latest_temp,
         "items": items,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Alertas (nivel 1/2/3) y reportes para los médicos en Tierra
+# --------------------------------------------------------------------------- #
+def assess(astronaut_id: str) -> dict:
+    """Junta todo lo de un astronauta: línea base, vitales, chequeos, alertas y reporte."""
+    samples = timeline(astronaut_id, analysis.BASELINE_WINDOW_S)
+    base = safe_baseline(samples)
+    checkins, _ = checkins_for(astronaut_id, 1)
+    vitals = vitals_for(astronaut_id, checkins)
+    try:
+        items = alerts.evaluate(base, samples[-1], vitals, checkins)
+    except Exception:  # noqa: BLE001  (una regla rota no debe tumbar el panel)
+        items = []
+    report = alerts.build_report(astronaut_id, base, samples[-1], vitals, checkins, items, samples)
+    return {"alerts": items, "report": report, "sample": samples[-1]}
+
+
+@app.get("/api/alerts")
+def get_alerts(astronaut_id: AstronautId = "bresnik") -> dict:
+    items = assess(astronaut_id)["alerts"]
+    return {"astronaut_id": astronaut_id, "max_level": max((a["level"] for a in items), default=0), "items": items}
+
+
+@app.get("/api/report")
+def get_report(astronaut_id: AstronautId = "bresnik") -> dict:
+    return assess(astronaut_id)["report"]
+
+
+@app.get("/api/mission-report")
+def get_mission_report() -> dict:
+    return {"generated_ts": time.time(), "items": [assess(a)["report"] for a in ASTRONAUTS]}
 
 
 @app.post("/api/telemetry")

@@ -38,6 +38,10 @@ SIGNALS = {
 LEVEL_ORDER = {"calibrating": 0, "normal": 1, "unreliable": 2, "observe": 3, "alert": 4}
 
 
+def duration_text(seconds: int) -> str:
+    return f"{seconds} s" if seconds < 90 else f"{round(seconds / 60)} min"
+
+
 def _valid_values(samples: list[dict], key: str, source: str) -> list[float]:
     return [
         float(s[key])
@@ -82,13 +86,23 @@ def signal_baseline(samples: list[dict], key: str) -> dict:
     delta = current - center
     level = "normal" if abs(z) < 2 else "observe" if abs(z) < 3 else "alert"
     direction = "sobre" if delta > 0 else "bajo"
+    # ¿Cuánto tiempo seguido lleva fuera de la banda normal? (para explicar "desde hace 2 min")
+    duration_s = 0
+    for s in reversed(samples):
+        value = s.get(key)
+        if s.get("source") != source or s.get("leads_off") or not isinstance(value, (int, float)):
+            break
+        if abs(value - center) < 2 * sd or (value - center) * delta < 0:
+            break
+        duration_s += 1
     if level == "normal":
         message = f"{meta['label']} dentro de tu rango normal ({center - 2 * sd:.0f}–{center + 2 * sd:.0f} {meta['unit']})."
     else:
-        message = f"{meta['label']} {abs(delta):.0f} {meta['unit']} {direction} tu base ({center:.0f} {meta['unit']})."
+        since = f" desde hace {duration_text(duration_s)}" if duration_s >= 10 else ""
+        message = f"{meta['label']} {abs(delta):.0f} {meta['unit']} {direction} tu base ({center:.0f} {meta['unit']}){since}."
     result.update(level=level, center=round(center, 1), sd=round(sd, 2), low=round(center - 2 * sd, 1),
                   high=round(center + 2 * sd, 1), current=round(current, 1), z=round(z, 2),
-                  delta=round(delta, 1), message=message)
+                  delta=round(delta, 1), duration_s=duration_s, message=message)
     return result
 
 
