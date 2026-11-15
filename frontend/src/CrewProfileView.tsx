@@ -6,11 +6,12 @@ import type { CrewProfile } from './profiles'
 // "Mi perfil": quién soy, qué sensores llevo, cuál es mi normal y quién puede ver mis datos.
 export default function CrewProfileView({ profile, sample, baseline, vitals }: { profile: CrewProfile; sample: Sample | null; baseline: Baseline | null; vitals: Vitals | null }) {
   const hw = sample?.source === 'hardware'
+  const vitalsHw = vitals?.latest_temp?.source === 'hardware' || vitals?.latest_bp?.source === 'hardware'
   const hr = baseline?.signals?.heart_rate_bpm, rr = baseline?.signals?.respiration_rate_bpm
   const sensors = [
     { name: 'AD8232', what: t('ECG → pulso y respiración (EDR)', 'ECG → heart rate and breathing (EDR)'), state: hw ? t('en vivo', 'live') : t('simulado', 'simulated'), real: hw },
     { name: 'MPU6050', what: t('Acelerómetro + giroscopio → movimiento, postura y posición', 'Accelerometer + gyroscope → movement, posture and position'), state: hw ? t('en vivo', 'live') : t('simulado', 'simulated'), real: hw },
-    { name: t('Presión y temperatura', 'Blood pressure and temperature'), what: t('Sin sensor: medición automática simulada cada 30 min o anotada a mano', 'No sensor: simulated automatic reading every 30 min or entered manually'), state: t('simulado', 'simulated'), real: false },
+    { name: t('Presión y temperatura', 'Blood pressure and temperature'), what: vitalsHw ? t('Enviadas por el ESP32 (valores de prueba, aún sin sensor)', 'Sent by the ESP32 (test values, no sensor yet)') : t('Sin sensor: medición automática simulada cada 30 min o anotada a mano', 'No sensor: simulated automatic reading every 30 min or entered manually'), state: vitalsHw ? 'ESP32' : t('simulado', 'simulated'), real: vitalsHw },
     { name: t('Chequeo diario', 'Daily check-in'), what: t('Sueño, ánimo, tensión y glucosa', 'Sleep, mood, stress and glucose'), state: 'manual', real: false },
   ]
   const access = profile.access === 'captain'

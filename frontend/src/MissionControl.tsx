@@ -18,7 +18,7 @@ type Env = ReturnType<typeof environments>[number]
 const utc = (ts: number) => new Date(ts * 1000).toISOString().slice(11, 16) + ' UTC'
 const delayText = (s: number) => s < 60 ? `${s.toLocaleString(locale())} s` : `${Math.round(s / 60)} min`
 const kb = (b: number) => `${(b / 1024).toFixed(1)} KB`
-const srcText = (s?: string | null) => s === 'manual' ? 'manual' : t('simulada', 'simulated')
+const srcText = (s?: string | null) => s === 'manual' ? 'manual' : s === 'hardware' ? 'ESP32' : t('simulada', 'simulated')
 
 function reportText(r: Report, who: CrewProfile | undefined, env: Env) {
   const hr = r.summary.heart_rate_bpm, rr = r.summary.respiration_rate_bpm
@@ -130,7 +130,7 @@ export default function MissionControl({ crew }: { crew: CrewProfile[] }) {
 
       <div className="mc-tx">
         <span>{t('Se envía un', 'A')} <b>{t(`resumen de ${kb(report.size_bytes)}`, `${kb(report.size_bytes)} summary`)}</b> {t(`en lugar de ${kb(report.raw_bytes)} de datos crudos`, `is sent instead of ${kb(report.raw_bytes)} of raw data`)} ({Math.max(1, Math.round(report.raw_bytes / report.size_bytes))}× {t('menos', 'less')}), {t('útil con conectividad limitada.', 'useful with limited connectivity.')}</span>
-        <span>{t('Fuentes', 'Sources')}: ECG <b>{report.data_source.ecg === 'hardware' ? 'ESP32' : t('simulado', 'simulated')}</b> · {t('vitales', 'vitals')} <b>{report.data_source.vitals === 'manual' ? 'manual' : report.data_source.vitals ? t('simulados', 'simulated') : '—'}</b> · {t('chequeo', 'check-in')} <b>{report.data_source.checkin ?? '—'}</b></span>
+        <span>{t('Fuentes', 'Sources')}: ECG <b>{report.data_source.ecg === 'hardware' ? 'ESP32' : t('simulado', 'simulated')}</b> · {t('vitales', 'vitals')} <b>{report.data_source.vitals ? srcText(report.data_source.vitals) : '—'}</b> · {t('chequeo', 'check-in')} <b>{report.data_source.checkin ?? '—'}</b></span>
         <button className="link-btn" onClick={download}>{t('Descargar reporte (.txt)', 'Download report (.txt)')}<Icon name="flecha-derecha" size={14} /></button>
       </div>
     </article>}

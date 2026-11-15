@@ -15,7 +15,7 @@ export type Baseline = {
 }
 
 export type VitalsItem = {
-  ts: number; source: 'simulation' | 'manual'
+  ts: number; source: 'simulation' | 'manual' | 'hardware'
   systolic_mmhg: number | null; diastolic_mmhg: number | null; temperature_c: number | null
   bp_label: string | null; temp_label: string | null
 }
