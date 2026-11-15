@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import Icon from './Icon'
 import { apiFetch } from './api'
+import { t } from './i18n'
 
 type Position = {
   source: 'hardware' | 'simulation'; x: number; y: number; z: number; distance_m: number; speed_m_s: number | null
@@ -10,10 +11,15 @@ type Position = {
 }
 
 const ZONE = {
-  cerca: { label: 'Zona cercana', color: '#35C99A', text: 'Dentro de la zona cercana a la escotilla.' },
-  atencion: { label: 'Atención', color: '#F2B84B', text: 'Te acercas al largo del cable de seguridad.' },
-  fuera: { label: 'Fuera de rango', color: '#F16F78', text: 'Más lejos que el cable de seguridad de referencia: regresa hacia la estación.' },
+  cerca: { color: '#35C99A' },
+  atencion: { color: '#F2B84B' },
+  fuera: { color: '#F16F78' },
 }
+const zoneText = (z: keyof typeof ZONE) => ({
+  cerca: { label: t('Zona cercana', 'Near zone'), text: t('Dentro de la zona cercana a la escotilla.', 'Inside the zone near the hatch.') },
+  atencion: { label: t('Atención', 'Attention'), text: t('Te acercas al largo del cable de seguridad.', 'You are nearing the safety tether length.') },
+  fuera: { label: t('Fuera de rango', 'Out of range'), text: t('Más lejos que el cable de seguridad de referencia: regresa hacia la estación.', 'Beyond the reference safety tether: head back to the station.') },
+})[z]
 
 // Datos: X, Y en el plano y Z hacia arriba (metros desde el punto 0). En three.js "arriba" es Y.
 const toScene = ([x, y, z]: [number, number, number]) => new THREE.Vector3(x, z, -y)
@@ -180,41 +186,41 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
     return () => { alive = false; window.clearInterval(timer) }
   }, [astronautId, demo])
 
-  const zone = pos ? ZONE[pos.zone] : ZONE.cerca
+  const zone = { ...(pos ? ZONE[pos.zone] : ZONE.cerca), ...zoneText(pos?.zone ?? 'cerca') }
   return <section className="eva-page">
     <div className="eva-stage">
       <div ref={mountRef} className="eva-canvas" />
       <div ref={labelRef} className="eva-label" style={{ borderColor: zone.color }}><b>{pos ? `${pos.distance_m.toFixed(1)} m` : '—'}</b><small>{name}</small></div>
       <div className="eva-hud">
-        <span className={`eva-source ${pos?.source === 'hardware' ? 'real' : ''}`}>{pos?.source === 'hardware' ? 'POSICIÓN · ESP32 + MPU6050' : 'POSICIÓN · SIMULACIÓN DE EVA'}</span>
-        {error && <span className="eva-source off">Sin conexión con la API</span>}
+        <span className={`eva-source ${pos?.source === 'hardware' ? 'real' : ''}`}>{pos?.source === 'hardware' ? t('POSICIÓN · ESP32 + MPU6050', 'POSITION · ESP32 + MPU6050') : t('POSICIÓN · SIMULACIÓN DE EVA', 'POSITION · EVA SIMULATION')}</span>
+        {error && <span className="eva-source off">{t('Sin conexión con la API', 'No connection to the API')}</span>}
       </div>
       <div className="eva-controls">
-        <button onClick={() => sceneRef.current?.reset()}>Centrar vista</button>
-        <label><input type="checkbox" checked={demo} onChange={e => setDemo(e.target.checked)} /> Trayectoria de demostración</label>
+        <button onClick={() => sceneRef.current?.reset()}>{t('Centrar vista', 'Reset view')}</button>
+        <label><input type="checkbox" checked={demo} onChange={e => setDemo(e.target.checked)} /> {t('Trayectoria de demostración', 'Demo path')}</label>
       </div>
-      <p className="eva-hint">Arrastra para girar · rueda para acercar</p>
+      <p className="eva-hint">{t('Arrastra para girar · rueda para acercar', 'Drag to rotate · scroll to zoom')}</p>
     </div>
 
     <div className="eva-side">
       <article className="eva-distance" style={{ borderColor: zone.color }}>
-        <span><Icon name="cohete" size={16} /> DISTANCIA A LA ESTACIÓN</span>
+        <span><Icon name="cohete" size={16} /> {t('DISTANCIA A LA ESTACIÓN', 'DISTANCE TO THE STATION')}</span>
         <b style={{ color: zone.color }}>{pos ? pos.distance_m.toFixed(1) : '—'}<small> m</small></b>
         <p><i style={{ background: zone.color }} />{zone.label} · {zone.text}</p>
         <div className="eva-bar"><i style={{ width: `${Math.min(100, ((pos?.distance_m ?? 0) / (pos?.tether_m ?? 25)) * 100)}%`, background: zone.color }} /><em style={{ left: `${((pos?.safe_m ?? 15) / (pos?.tether_m ?? 25)) * 100}%` }} /></div>
-        <small className="eva-scale"><span>0 m</span><span>{pos?.safe_m ?? 15} m</span><span>{pos?.tether_m ?? 25} m cable</span></small>
+        <small className="eva-scale"><span>0 m</span><span>{pos?.safe_m ?? 15} m</span><span>{pos?.tether_m ?? 25} m {t('cable', 'tether')}</span></small>
       </article>
       <article className="eva-coords">
         <div><span>X</span><b>{pos?.x.toFixed(1) ?? '—'}</b><small>m</small></div>
         <div><span>Y</span><b>{pos?.y.toFixed(1) ?? '—'}</b><small>m</small></div>
         <div><span>Z</span><b>{pos?.z.toFixed(1) ?? '—'}</b><small>m</small></div>
-        <div><span>Velocidad</span><b>{pos?.speed_m_s?.toFixed(2) ?? '—'}</b><small>m/s</small></div>
-        <div><span>Máx. (2 min)</span><b>{pos?.max_distance_m.toFixed(1) ?? '—'}</b><small>m</small></div>
+        <div><span>{t('Velocidad', 'Speed')}</span><b>{pos?.speed_m_s?.toFixed(2) ?? '—'}</b><small>m/s</small></div>
+        <div><span>{t('Máx. (2 min)', 'Max (2 min)')}</span><b>{pos?.max_distance_m.toFixed(1) ?? '—'}</b><small>m</small></div>
       </article>
       <article className="eva-note">
-        <span>CÓMO SE MIDE</span>
-        <p>El punto 0 es la escotilla de la estación. El ESP32 estima X, Y y Z integrando el acelerómetro MPU6050 desde ese punto, y lo envía a Supabase una vez por segundo.</p>
-        <p>Integrar la aceleración acumula error con el tiempo: es una <b>estimación</b>. Una misión real lo combinaría con balizas de radio (UWB) en la estación.</p>
+        <span>{t('CÓMO SE MIDE', 'HOW IT IS MEASURED')}</span>
+        <p>{t('El punto 0 es la escotilla de la estación. El ESP32 estima X, Y y Z integrando el acelerómetro MPU6050 desde ese punto, y lo envía a Supabase una vez por segundo.', 'Point 0 is the station hatch. The ESP32 estimates X, Y and Z by integrating the MPU6050 accelerometer from that point, and sends it to Supabase once per second.')}</p>
+        <p>{t('Integrar la aceleración acumula error con el tiempo: es una', 'Integrating acceleration builds up error over time: it is an')} <b>{t('estimación', 'estimate')}</b>. {t('Una misión real lo combinaría con balizas de radio (UWB) en la estación.', 'A real mission would combine it with radio beacons (UWB) on the station.')}</p>
       </article>
     </div>
   </section>

@@ -26,14 +26,16 @@ from __future__ import annotations
 from math import cos, floor, pi, sin, sqrt
 from statistics import median
 
+from .ctx import tr
+
 BASELINE_WINDOW_S = 600   # 10 minutos de referencia
 EXCLUDE_RECENT_S = 60     # el último minuto no entra en la base
 CURRENT_WINDOW_S = 15     # "ahora" = mediana de los últimos 15 s
 MIN_SAMPLES = 30          # menos que esto: "calibrando"
 
 SIGNALS = {
-    "heart_rate_bpm": {"label": "Pulso", "unit": "lpm", "min_sd": 3.0},
-    "respiration_rate_bpm": {"label": "Respiración", "unit": "rpm", "min_sd": 1.0},
+    "heart_rate_bpm": {"label": ("Pulso", "Heart rate"), "unit": ("lpm", "bpm"), "min_sd": 3.0},
+    "respiration_rate_bpm": {"label": ("Respiración", "Breathing"), "unit": ("rpm", "br/min"), "min_sd": 1.0},
 }
 LEVEL_ORDER = {"calibrating": 0, "normal": 1, "unreliable": 2, "observe": 3, "alert": 4}
 
@@ -52,10 +54,12 @@ def _valid_values(samples: list[dict], key: str, source: str) -> list[float]:
 
 def signal_baseline(samples: list[dict], key: str) -> dict:
     """`samples`: una muestra por segundo, de la más antigua a la más nueva."""
-    meta = SIGNALS[key]
+    raw = SIGNALS[key]
+    meta = {"label": tr(*raw["label"]), "unit": tr(*raw["unit"]), "min_sd": raw["min_sd"]}
+    low_label = meta["label"].lower()
     result = {"label": meta["label"], "unit": meta["unit"], "level": "calibrating", "n": 0,
               "center": None, "sd": None, "low": None, "high": None, "current": None, "z": None,
-              "delta": None, "message": f"Calibrando tu línea base de {meta['label'].lower()}…"}
+              "delta": None, "message": tr(f"Calibrando tu línea base de {low_label}…", f"Calibrating your {low_label} baseline…")}
     if not samples:
         return result
 
@@ -69,13 +73,14 @@ def signal_baseline(samples: list[dict], key: str) -> dict:
     result["n"] = len(reference)
 
     if last.get("leads_off"):
-        result.update(level="unreliable", message="Lectura poco confiable: revisa los electrodos.")
+        result.update(level="unreliable", message=tr("Lectura poco confiable: revisa los electrodos.", "Unreliable reading: check the electrodes."))
         return result
     if not reference and not recent:
-        result["message"] = f"Sin lectura confiable de {meta['label'].lower()} en este momento."
+        result["message"] = tr(f"Sin lectura confiable de {low_label} en este momento.", f"No reliable {low_label} reading right now.")
         return result
     if len(reference) < MIN_SAMPLES or not recent:
-        result["message"] = f"Calibrando tu línea base de {meta['label'].lower()} ({len(reference)}/{MIN_SAMPLES} lecturas)."
+        result["message"] = tr(f"Calibrando tu línea base de {low_label} ({len(reference)}/{MIN_SAMPLES} lecturas).",
+                               f"Calibrating your {low_label} baseline ({len(reference)}/{MIN_SAMPLES} readings).")
         return result
 
     center = median(reference)
@@ -85,7 +90,6 @@ def signal_baseline(samples: list[dict], key: str) -> dict:
     z = (current - center) / sd
     delta = current - center
     level = "normal" if abs(z) < 2 else "observe" if abs(z) < 3 else "alert"
-    direction = "sobre" if delta > 0 else "bajo"
     # ¿Cuánto tiempo seguido lleva fuera de la banda normal? (para explicar "desde hace 2 min")
     duration_s = 0
     for s in reversed(samples):
@@ -96,10 +100,12 @@ def signal_baseline(samples: list[dict], key: str) -> dict:
             break
         duration_s += 1
     if level == "normal":
-        message = f"{meta['label']} dentro de tu rango normal ({center - 2 * sd:.0f}–{center + 2 * sd:.0f} {meta['unit']})."
+        rng = f"{center - 2 * sd:.0f}–{center + 2 * sd:.0f} {meta['unit']}"
+        message = tr(f"{meta['label']} dentro de tu rango normal ({rng}).", f"{meta['label']} within your normal range ({rng}).")
     else:
-        since = f" desde hace {duration_text(duration_s)}" if duration_s >= 10 else ""
-        message = f"{meta['label']} {abs(delta):.0f} {meta['unit']} {direction} tu base ({center:.0f} {meta['unit']}){since}."
+        since = tr(f" desde hace {duration_text(duration_s)}", f" for {duration_text(duration_s)}") if duration_s >= 10 else ""
+        message = tr(f"{meta['label']} {abs(delta):.0f} {meta['unit']} {'sobre' if delta > 0 else 'bajo'} tu base ({center:.0f} {meta['unit']}){since}.",
+                     f"{meta['label']} {abs(delta):.0f} {meta['unit']} {'above' if delta > 0 else 'below'} your baseline ({center:.0f} {meta['unit']}){since}.")
     result.update(level=level, center=round(center, 1), sd=round(sd, 2), low=round(center - 2 * sd, 1),
                   high=round(center + 2 * sd, 1), current=round(current, 1), z=round(z, 2),
                   delta=round(delta, 1), duration_s=duration_s, message=message)
@@ -112,7 +118,8 @@ def baseline(samples: list[dict]) -> dict:
     return {
         "source": samples[-1].get("source") if samples else None,
         "window_s": BASELINE_WINDOW_S,
-        "method": "Mediana de tus últimos 10 min (sin el último minuto) ± 2 desviaciones robustas",
+        "method": tr("Mediana de tus últimos 10 min (sin el último minuto) ± 2 desviaciones robustas",
+                     "Median of your last 10 min (excluding the last minute) ± 2 robust deviations"),
         "level": worst,
         "signals": signals,
     }
@@ -207,7 +214,7 @@ def distance_zone(distance: float) -> str:
     return "fuera"
 
 
-def position_track(samples: list[dict], phase: float, demo: bool) -> dict:
+def position_track(samples: list[dict], phase: float, demo: bool, sim_fn=None) -> dict:
     """Posición actual + estela. Usa la posición del ESP32 si la envía; si no (o en modo
     demo), la trayectoria simulada. Siempre dice de dónde sale el dato."""
     import time
@@ -218,7 +225,8 @@ def position_track(samples: list[dict], phase: float, demo: bool) -> dict:
         if real and not demo:
             x, y, z, src = float(s["pos_x_m"]), float(s["pos_y_m"]), float(s.get("pos_z_m") or 0), "hardware"
         else:
-            x, y, z = eva_position(phase, end - (len(samples) - 1 - i))  # un punto por segundo
+            ts = end - (len(samples) - 1 - i)  # un punto por segundo
+            x, y, z = sim_fn(ts) if sim_fn else eva_position(phase, ts)
             src = "simulation"
         points.append({"x": x, "y": y, "z": z, "source": src})
     last = points[-1] if points else {"x": 0, "y": 0, "z": 0, "source": "simulation"}
