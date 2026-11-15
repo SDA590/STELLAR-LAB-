@@ -148,3 +148,27 @@ Invoke-RestMethod -Method Post -Uri "https://ybtgkwftjkyhacunbami.supabase.co/re
 
 Si no sale error, la fila llegó. En el panel, el astronauta pasa a **LIVE ESP32** mientras lleguen
 datos y vuelve a **SIM** unos 5 segundos después de que dejen de llegar.
+
+## 6. MPU6050: entrenamiento y posición 3D (nuevo)
+
+La app ya tiene dos pantallas que usan el MPU6050. Funcionan en modo demostración mientras el ESP32
+envíe `0` en el acelerómetro; en cuanto lleguen datos reales, cambian solas a "SENSOR REAL".
+
+**Lo que necesita la app en cada fila (1 por segundo):**
+
+| Campo | Qué es | Unidad |
+|---|---|---|
+| `ax`, `ay`, `az` | aceleración cruda del MPU6050 (incluye la gravedad: en reposo una de ellas ≈ 9,8) | m/s² |
+| `gx`, `gy`, `gz` | giroscopio | °/s |
+| `pos_x_m`, `pos_y_m`, `pos_z_m` | posición estimada desde el **punto 0** (donde se encendió/calibró, = la estación) | m |
+
+- **Entrenamiento:** la app calcula el ángulo de la pierna o brazo comparando `ax, ay, az` con la
+  postura neutra que el astronauta calibra con un botón. **No hace falta** calcular el ángulo en el ESP32.
+  Para contar repeticiones bien, envía **al menos 1 fila por segundo** (hoy llegan cada ~4 s).
+- **Posición 3D:** el ESP32 integra la aceleración (sin la gravedad) dos veces para estimar X, Y, Z
+  desde el punto 0. Acumula error: conviene reiniciar a 0 cuando el astronauta está quieto en la
+  estación (botón o al arrancar).
+- **Importante:** antes de enviar `pos_z_m`, Santiago debe ejecutar `docs/sql/003_pos_z.sql` en
+  Supabase. Si se envía un campo que no existe en la tabla, Supabase rechaza la fila completa (error 400).
+- Si un dato no se mide, envía `null` (no `0`): así el panel muestra "sin sensor" en vez de un valor falso.
+  Lo mismo para `battery_pct` mientras no se mida la batería.

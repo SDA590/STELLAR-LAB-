@@ -23,7 +23,7 @@ Es estadística simple y transparente. NO es un dispositivo médico.
 
 from __future__ import annotations
 
-from math import floor, sin
+from math import cos, floor, pi, sin, sqrt
 from statistics import median
 
 BASELINE_WINDOW_S = 600   # 10 minutos de referencia
@@ -176,4 +176,65 @@ def vitals_item(ts: float, source: str, sys_: float | None, dia: float | None, t
         "temperature_c": temp,
         "bp_label": blood_pressure_label(sys_, dia) if sys_ is not None and dia is not None else None,
         "temp_label": temperature_label(temp) if temp is not None else None,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Posición respecto a la estación (punto 0) para la vista 3D (punto 5 del plan)
+# --------------------------------------------------------------------------- #
+EVA_PERIOD_S = 600        # una salida simulada completa (ida y vuelta) cada 10 min
+SAFE_DISTANCE_M = 15      # zona cercana
+TETHER_LIMIT_M = 25       # largo del cable de seguridad (referencia de la demo)
+
+
+def eva_position(phase: float, ts: float) -> tuple[float, float, float]:
+    """Trayectoria SIMULADA de una caminata espacial (EVA): sale de la escotilla,
+    se aleja hasta ~22 m y vuelve. Siempre da lo mismo para el mismo instante."""
+    u = (ts % EVA_PERIOD_S) / EVA_PERIOD_S
+    r = 3 + 19 * sin(pi * u) ** 2
+    angle = phase + 0.9 * sin(2 * pi * u)
+    x = r * cos(angle)
+    y = r * sin(angle)
+    z = 2.5 * sin(4 * pi * u + phase) + 0.15 * r
+    return round(x, 2), round(y, 2), round(z, 2)
+
+
+def distance_zone(distance: float) -> str:
+    if distance <= SAFE_DISTANCE_M:
+        return "cerca"
+    if distance <= TETHER_LIMIT_M:
+        return "atencion"
+    return "fuera"
+
+
+def position_track(samples: list[dict], phase: float, demo: bool) -> dict:
+    """Posición actual + estela. Usa la posición del ESP32 si la envía; si no (o en modo
+    demo), la trayectoria simulada. Siempre dice de dónde sale el dato."""
+    import time
+    points = []
+    end = floor(time.time())
+    for i, s in enumerate(samples):
+        real = s.get("source") == "hardware" and s.get("pos_x_m") is not None and s.get("pos_y_m") is not None
+        if real and not demo:
+            x, y, z, src = float(s["pos_x_m"]), float(s["pos_y_m"]), float(s.get("pos_z_m") or 0), "hardware"
+        else:
+            x, y, z = eva_position(phase, end - (len(samples) - 1 - i))  # un punto por segundo
+            src = "simulation"
+        points.append({"x": x, "y": y, "z": z, "source": src})
+    last = points[-1] if points else {"x": 0, "y": 0, "z": 0, "source": "simulation"}
+    distance = sqrt(last["x"] ** 2 + last["y"] ** 2 + last["z"] ** 2)
+    speed = None
+    if len(points) >= 6:
+        a = points[-6]
+        speed = sqrt((last["x"] - a["x"]) ** 2 + (last["y"] - a["y"]) ** 2 + (last["z"] - a["z"]) ** 2) / 5
+    return {
+        "source": last["source"],
+        "x": last["x"], "y": last["y"], "z": last["z"],
+        "distance_m": round(distance, 2),
+        "speed_m_s": round(speed, 2) if speed is not None else None,
+        "max_distance_m": round(max((sqrt(p["x"] ** 2 + p["y"] ** 2 + p["z"] ** 2) for p in points), default=0), 2),
+        "zone": distance_zone(distance),
+        "safe_m": SAFE_DISTANCE_M,
+        "tether_m": TETHER_LIMIT_M,
+        "trail": [[p["x"], p["y"], p["z"]] for p in points],
     }

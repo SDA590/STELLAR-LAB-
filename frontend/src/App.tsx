@@ -10,18 +10,20 @@ import { levelInfo, type Alert, type Baseline, type SignalBaseline, type Vitals 
 import Icon, { type IconName } from './Icon'
 import Alerts from './Alerts'
 import MissionControl from './MissionControl'
+import EvaView from './EvaView'
 
 type Sample = {
   astronaut_id: string; source: 'simulation' | 'hardware'; received_at: string; ecg_raw: number; leads_off: boolean;
   resp_raw: number | null; respiration_rate_bpm: number | null;
   heart_rate_bpm: number | null; ax: number | null; ay: number | null; az: number | null; gx: number | null; gy: number | null; gz: number | null;
-  pos_x_m: number | null; pos_y_m: number | null; area_m2: number | null; steps: number | null; battery_pct: number | null;
+  pos_x_m: number | null; pos_y_m: number | null; pos_z_m?: number | null; area_m2: number | null; steps: number | null; battery_pct: number | null;
 }
 
 // Pantallas: la clave interna sigue en inglés; el texto visible sigue el diseño de Choy (español).
 const SCREENS: Record<string, { label: string; icon: IconName; subtitle: string }> = {
   Dashboard: { label: 'Panel principal', icon: 'inicio', subtitle: 'Tu salud frente a tu propia línea base' },
   Monitoring: { label: 'Monitorización', icon: 'monitorizacion', subtitle: 'Tus signos vitales en tiempo real' },
+  EVA: { label: 'Posición EVA', icon: 'cohete', subtitle: 'Dónde estás respecto a la estación, en 3D y en tiempo real' },
   Wellness: { label: 'Bienestar', icon: 'bienestar', subtitle: 'Tu equilibrio en la misión: chequeo diario y recuperación' },
   'Exercise Coach': { label: 'Entrenamiento', icon: 'entrenamiento', subtitle: 'Rutinas guiadas contra la pérdida de músculo y hueso' },
   'Crew Profile': { label: 'Mi perfil', icon: 'perfil', subtitle: 'Datos del tripulante' },
@@ -133,6 +135,7 @@ export default function App() {
   const respiration = series.map(s => s.resp_raw)
   const hrSeries = series.map(s => s.leads_off ? null : s.heart_rate_bpm)
   const rrSeries = series.map(s => s.leads_off ? null : s.respiration_rate_bpm)
+  const distance = sample?.pos_x_m != null && sample?.pos_y_m != null ? Math.hypot(sample.pos_x_m, sample.pos_y_m, sample.pos_z_m ?? 0) : null
   const hasImu = sample?.az != null
   const movement = series.map(s => s.ax == null || s.ay == null || s.az == null ? null : Math.sqrt(s.ax ** 2 + s.ay ** 2 + s.az ** 2))
   const overall = levelInfo(baseline?.level)
@@ -143,7 +146,7 @@ export default function App() {
   if (!profile) return <ProfilePicker profiles={profiles} onSelect={selected => { setProfile(selected); setActive(selected.access === 'nasa' ? 'Mission Control' : 'Dashboard') }} />
 
   const crew = profiles.filter(item => item.access !== 'nasa')
-  const nav = profile.access === 'nasa' ? [] : ['Dashboard', 'Monitoring', 'Wellness', 'Exercise Coach', 'Crew Profile', 'Health Analytics', 'Alerts', 'Settings']
+  const nav = profile.access === 'nasa' ? [] : ['Dashboard', 'Monitoring', 'EVA', 'Wellness', 'Exercise Coach', 'Crew Profile', 'Health Analytics', 'Alerts', 'Settings']
   const authorized = profile.access === 'nasa' ? ['Mission Control', 'System Settings'] : profile.access === 'captain' ? ['Crew Command', 'Mission Control'] : []
   const activeAlerts = alerts.filter(a => a.level >= 1)
   const maxLevel = Math.max(0, ...alerts.map(a => a.level))
@@ -176,7 +179,7 @@ export default function App() {
       </div>
       <div className="page-title"><Icon name={screen(active).icon} size={40} /><div><h1>{screen(active).label}</h1><p>{screen(active).subtitle}</p></div><span className={`access-badge access-${profile.access}`}>{profile.access === 'captain' ? 'ACCESO COMANDANTE' : profile.access === 'nasa' ? 'EQUIPO MÉDICO · TIERRA' : 'VISTA PERSONAL'}</span></div>
 
-      {active === 'Crew Command' && profile.access === 'captain' ? <CrewCommand crew={crew} /> : active === 'Mission Control' && profile.access !== 'crew' ? <MissionControl crew={crew} /> : active === 'Alerts' ? <Alerts alerts={alerts} onOpen={setActive} /> : active === 'Exercise Coach' ? <ExerciseCoach sample={sample} /> : active === 'Wellness' ? <WellnessCheck astronautId={profile.id} /> : active === 'Settings' || active === 'System Settings' ? <SettingsPanel profile={profile} /> : active !== 'Dashboard' && active !== 'Monitoring' ? <section className="placeholder">
+      {active === 'Crew Command' && profile.access === 'captain' ? <CrewCommand crew={crew} /> : active === 'Mission Control' && profile.access !== 'crew' ? <MissionControl crew={crew} /> : active === 'Alerts' ? <Alerts alerts={alerts} onOpen={setActive} /> : active === 'EVA' ? <EvaView astronautId={profile.id} name={profile.shortName} /> : active === 'Exercise Coach' ? <ExerciseCoach sample={sample} astronautId={profile.id} /> : active === 'Wellness' ? <WellnessCheck astronautId={profile.id} /> : active === 'Settings' || active === 'System Settings' ? <SettingsPanel profile={profile} /> : active !== 'Dashboard' && active !== 'Monitoring' ? <section className="placeholder">
         <span><Icon name={screen(active).icon} size={34} /></span><p>STELLAR HEALTH</p><h2>{screen(active).label}</h2><div className="rule" />
         <p>Este módulo forma parte de la arquitectura prevista. En el siguiente ciclo conectaremos sus datos, reglas y flujos específicos.</p>
         <button onClick={() => setActive('Dashboard')}>Volver al panel principal</button>
@@ -198,7 +201,9 @@ export default function App() {
           <article className="panel trend-panel"><div className="panel-head"><div><span>RESPIRACIÓN · TU LÍNEA BASE</span><h3>Respiración vs. tu normal</h3></div><b className={`level-pill level-${rrBase?.level ?? 'calibrating'}`}>{levelInfo(rrBase?.level).label}</b></div><Line values={rrSeries} band={rrBase ?? undefined} color="#56d9ef" /><div className="chart-meta"><span>VENTANA · 90 s</span><span>{rrBase?.center != null ? `BASE ${rrBase.center} ± ${(2 * (rrBase.sd ?? 0)).toFixed(1)} rpm` : 'CALIBRANDO'}</span><span>{rrBase?.z != null ? `z = ${rrBase.z}` : '—'}</span></div></article>
           <article className="panel ecg-panel"><div className="panel-head"><div><span>ECG / AD8232</span><h3>Actividad cardiaca</h3></div><b className="live"><i /> LIVE</b></div><Line values={ecg} /><div className="chart-meta"><span>VENTANA · 90 s</span><span>ADC · 12 bit</span><span>{sample?.leads_off ? 'ELECTRODOS SUELTOS' : 'SEÑAL ACTIVA'}</span></div></article>
           <article className="panel respiration-panel"><div className="panel-head"><div><span>RESPIRACIÓN · DERIVADA DEL ECG</span><h3>Ciclo de respiración</h3></div><b>{respirationRate?.toFixed(1) ?? '—'} rpm</b></div><Line values={respiration} color="#56d9ef" /><div className="chart-meta"><span>ESTIMADA DESDE EL ECG (EDR)</span><span>{sample?.source === 'hardware' ? 'ESP32' : 'SIMULACIÓN'}</span><span>{levelInfo(rrBase?.level).label.toUpperCase()}</span></div></article>
-          <article className="panel footprint"><div className="panel-head"><div><span>IMU / MPU6050</span><h3>Zona de movimiento</h3></div><b>{sample?.area_m2?.toFixed(2) ?? '0.00'} m²</b></div><div className="map"><div className="orbit one"/><div className="orbit two"/><div className="trail"/><div className="dot" style={{left: `${50 + Math.min(38, Math.max(-38, (sample?.pos_x_m ?? 0) * 15))}%`, top: `${50 + Math.min(35, Math.max(-35, (sample?.pos_y_m ?? 0) * 18))}%`}}><i/></div><span className="axis x">X</span><span className="axis y">Y</span></div><p>Estimación 2D con corrección de reposo. La deriva del IMU se reinicia desde Arduino IDE.</p></article>
+          <article className="panel footprint eva-mini"><div className="panel-head"><div><span>POSICIÓN · PUNTO 0 = ESTACIÓN</span><h3>Distancia a la estación</h3></div><b>{distance != null ? `${distance.toFixed(1)} m` : '—'}</b></div>
+            <div className="eva-mini-body"><Icon name="cohete" size={46} /><div><p>X <b>{sample?.pos_x_m?.toFixed(1) ?? '—'}</b> · Y <b>{sample?.pos_y_m?.toFixed(1) ?? '—'}</b> · Z <b>{sample?.pos_z_m?.toFixed(1) ?? '—'}</b> m</p><p>{sample?.source === 'hardware' ? 'Estimada por el ESP32 con el MPU6050.' : 'Trayectoria simulada de una caminata espacial.'}</p></div></div>
+            <button className="link-btn" onClick={() => setActive('EVA')}>Ver en 3D<Icon name="flecha-derecha" size={14} /></button></article>
           <article className="panel motion"><div className="panel-head"><div><span>MOVIMIENTO</span><h3>Aceleración del pie</h3></div><b>{hasImu && sample ? Math.sqrt((sample.ax ?? 0) ** 2 + (sample.ay ?? 0) ** 2 + (sample.az ?? 0) ** 2).toFixed(2) : '—'} m/s²</b></div><Line values={movement} color="#ffb55c" /><div className="vectors"><span>AX <b>{sample?.ax?.toFixed(2) ?? '—'}</b></span><span>AY <b>{sample?.ay?.toFixed(2) ?? '—'}</b></span><span>AZ <b>{sample?.az?.toFixed(2) ?? '—'}</b></span></div></article>
           <article className={`panel insight level-${topAlert ? (topAlert.level >= 3 ? 'alert' : topAlert.level === 2 ? 'observe' : baseline?.level ?? 'normal') : baseline?.level ?? 'calibrating'}`}><span>STELLAR AI · EVALUAR Y ACTUAR</span>
             <h3>{topAlert ? `${topAlert.level_title}: ${topAlert.title}` : overall.title}</h3>
