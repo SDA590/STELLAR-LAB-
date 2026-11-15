@@ -94,10 +94,10 @@ def evaluate(base: dict, sample: dict, vitals: dict, checkins: list[dict], now: 
     except (TypeError, ValueError):
         distance = 0.0
     if distance > TETHER_LIMIT_M:
-        out.append(_alert("eva-far", 2, tr("Lejos de la estación", "Far from the station"),
+        out.append(_alert("eva-far", 2, tr("Lejos de la cápsula", "Far from the capsule"),
                           tr(f"Estás a {distance:.1f} m de la escotilla: más que el cable de seguridad de referencia ({TETHER_LIMIT_M} m).",
                              f"You are {distance:.1f} m from the hatch: beyond the reference safety tether ({TETHER_LIMIT_M} m)."),
-                          [tr("Detén el avance y vuelve hacia la estación.", "Stop moving out and head back to the station."),
+                          [tr("Detén el avance y vuelve hacia la cápsula.", "Stop moving out and head back to the capsule."),
                            tr("Confirma tu posición con el oficial de la EVA.", "Confirm your position with the EVA officer."),
                            tr("Revisa el anclaje del cable de seguridad.", "Check the safety tether anchor.")],
                           "distance", "EVA", [tr(f"distancia {distance:.1f} m", f"distance {distance:.1f} m"),

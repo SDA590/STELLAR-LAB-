@@ -192,7 +192,7 @@ def vitals_item(ts: float, source: str, sys_: float | None, dia: float | None, t
 EVA_PERIOD_S = 600        # una salida simulada completa (ida y vuelta) cada 10 min
 SAFE_DISTANCE_M = 15      # zona cercana
 TETHER_LIMIT_M = 25       # largo del cable de seguridad (referencia de la demo)
-CABIN_RANGE_M = 2         # dentro de la cápsula: X, Y y Z entre -2 y +2 m del punto 0
+CABIN_RANGE_M = 2         # dentro de la cápsula: a 2 m o menos del punto 0 (igual que el firmware)
 
 
 def eva_position(phase: float, ts: float) -> tuple[float, float, float]:
@@ -207,8 +207,12 @@ def eva_position(phase: float, ts: float) -> tuple[float, float, float]:
     return round(x, 2), round(y, 2), round(z, 2)
 
 
-def in_cabin(x: float, y: float, z: float) -> bool:
-    return max(abs(x), abs(y), abs(z)) <= CABIN_RANGE_M
+def in_cabin(x: float, y: float, z: float, outside_flag: bool | None = None) -> bool:
+    """Dentro de la cápsula = a 2 m o menos del punto 0. Si el ESP32 ya lo calculó
+    (`outside_safe_radius`), se usa su respuesta para que app y nodo digan lo mismo."""
+    if outside_flag is not None:
+        return not outside_flag
+    return sqrt(x * x + y * y + z * z) <= CABIN_RANGE_M
 
 
 def distance_zone(distance: float, inside: bool = False) -> str:
@@ -235,7 +239,8 @@ def position_track(samples: list[dict], phase: float, demo: bool, sim_fn=None) -
             ts = end - (len(samples) - 1 - i)  # un punto por segundo
             x, y, z = sim_fn(ts) if sim_fn else eva_position(phase, ts)
             src = "simulation"
-        points.append({"x": x, "y": y, "z": z, "source": src})
+        flag = s.get("outside_safe_radius") if src == "hardware" else None
+        points.append({"x": x, "y": y, "z": z, "source": src, "outside": flag})
     last = points[-1] if points else {"x": 0, "y": 0, "z": 0, "source": "simulation"}
     distance = sqrt(last["x"] ** 2 + last["y"] ** 2 + last["z"] ** 2)
     speed = None
@@ -248,7 +253,7 @@ def position_track(samples: list[dict], phase: float, demo: bool, sim_fn=None) -
         "distance_m": round(distance, 2),
         "speed_m_s": round(speed, 2) if speed is not None else None,
         "max_distance_m": round(max((sqrt(p["x"] ** 2 + p["y"] ** 2 + p["z"] ** 2) for p in points), default=0), 2),
-        "zone": distance_zone(distance, in_cabin(last["x"], last["y"], last["z"])),
+        "zone": distance_zone(distance, in_cabin(last["x"], last["y"], last["z"], last.get("outside"))),
         "cabin_m": CABIN_RANGE_M,
         "safe_m": SAFE_DISTANCE_M,
         "tether_m": TETHER_LIMIT_M,

@@ -1,17 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { t } from './i18n'
+import TrainingFigure, { useCycle, type Exercise } from './TrainingFigure'
 
 type MotionSample = {
   source?: string; received_at?: string; ax: number | null; ay: number | null; az: number | null
   gx: number | null; gy: number | null; gz: number | null; respiration_rate_bpm: number | null; heart_rate_bpm: number | null
 }
 
-// goal = ángulo objetivo (grados) respecto a la postura neutra calibrada.
+// Rutinas del protocolo diario (Entrenamiento.txt): fuerza en ARED y cardio en T2 / CEVIS.
+// goal = ángulo objetivo (grados) respecto a la postura neutra calibrada; 0 = se guía por tiempo y pulso.
 const routines = () => [
-  { id: 'knee', name: t('Elevación de rodilla', 'Knee raise'), duration: '06:00', target: t('Cadera y piernas', 'Hips and legs'), sensor: t('MPU6050 en el muslo', 'MPU6050 on the thigh'), goal: 70, cue: t('Eleva la rodilla de forma controlada y conserva el tronco estable.', 'Raise the knee in a controlled way and keep the torso steady.'), why: t('Mantiene fuerza en cadera y piernas, que pierden masa muscular en microgravedad.', 'Keeps strength in hips and legs, which lose muscle mass in microgravity.') },
-  { id: 'hip', name: t('Movilidad de cadera', 'Hip mobility'), duration: '05:00', target: t('Cadera y equilibrio', 'Hips and balance'), sensor: t('MPU6050 en el muslo', 'MPU6050 on the thigh'), goal: 35, cue: t('Abre la pierna hacia un lado sin inclinar el torso.', 'Open the leg to the side without tilting the torso.'), why: t('Conserva la movilidad de la cadera y el equilibrio al volver a la gravedad.', 'Preserves hip mobility and balance for the return to gravity.') },
-  { id: 'shoulder', name: t('Elevación de brazo', 'Arm raise'), duration: '04:00', target: t('Hombros y espalda', 'Shoulders and back'), sensor: t('MPU6050 en el brazo', 'MPU6050 on the arm'), goal: 90, cue: t('Sube el brazo hacia el lado hasta la altura del hombro y baja despacio.', 'Raise the arm sideways to shoulder height and lower it slowly.'), why: t('Previene rigidez de hombros y espalda por posturas fijas en la nave.', 'Prevents shoulder and back stiffness from fixed postures in the spacecraft.') },
-  { id: 'breath', name: t('Respiración de recuperación', 'Recovery breathing'), duration: '03:00', target: t('Estrés y recuperación', 'Stress and recovery'), sensor: t('ECG (respiración estimada)', 'ECG (estimated breathing)'), goal: 0, cue: t('Inhala cuatro segundos y exhala seis segundos sin forzar.', 'Breathe in for four seconds and out for six without forcing.'), why: t('Baja el pulso y la tensión después del ejercicio o de una alerta.', 'Lowers heart rate and stress after exercise or an alert.') },
+  { id: 'squat' as Exercise, block: 'ared', name: t('Sentadillas', 'Squats'), sets: '4×10', rest: 90, load: '180 kg', muscles: t('Cuádriceps · Glúteos · Core', 'Quads · Glutes · Core'), sensor: t('MPU6050 en el muslo', 'MPU6050 on the thigh'), goal: 80, cue: t('Desciende con el torso estable y la espalda neutra, y empuja desde los talones contra la resistencia del ARED.', 'Go down with a steady torso and neutral back, and push through your heels against the ARED resistance.'), why: t('Estimula fémur, cadera y pelvis para frenar la pérdida de hueso y conserva cuádriceps y glúteos para sostener tu peso al volver a la Tierra.', 'Loads the femur, hips and pelvis to slow bone loss and keeps quads and glutes strong enough to carry your weight back on Earth.') },
+  { id: 'deadlift' as Exercise, block: 'ared', name: t('Peso muerto', 'Deadlift'), sets: '3×12', rest: 90, load: '160 kg', muscles: t('Cadena posterior · Core', 'Posterior chain · Core'), sensor: t('MPU6050 en el muslo', 'MPU6050 on the thigh'), goal: 60, cue: t('Eleva la barra desde la plataforma extendiendo cadera y tronco, con el abdomen contraído.', 'Lift the bar from the platform by extending hips and trunk, with the core braced.'), why: t('Protege la densidad de las vértebras lumbares y fortalece isquiotibiales, glúteos y erectores: evita dolor de espalda y atrofia postural.', 'Protects lumbar bone density and strengthens hamstrings, glutes and spinal erectors: prevents back pain and postural atrophy.') },
+  { id: 'calf' as Exercise, block: 'ared', name: t('Elevación de talones', 'Calf raises'), sets: '3×20', rest: 60, load: '90 kg', muscles: t('Gastrocnemios · Sóleo', 'Gastrocnemius · Soleus'), sensor: t('MPU6050 en el pie', 'MPU6050 on the foot'), goal: 20, cue: t('Con la barra en los hombros y las puntas en la plataforma, sube al máximo y baja lento.', 'With the bar on your shoulders and toes on the platform, rise all the way and lower slowly.'), why: t('Evita la pérdida rápida de masa en las pantorrillas, clave para el equilibrio y para caminar tras el aterrizaje.', 'Prevents fast calf muscle loss, key for balance and walking after landing.') },
+  { id: 'bench' as Exercise, block: 'ared', name: t('Press de banca', 'Bench press'), sets: '3×10', rest: 90, load: '70 kg', muscles: t('Pectorales · Deltoides · Tríceps', 'Chest · Deltoids · Triceps'), sensor: t('MPU6050 en el antebrazo', 'MPU6050 on the forearm'), goal: 85, cue: t('Acostado en el banco con las correas puestas, empuja la barra hacia arriba y bájala controlada al pecho.', 'Lying on the bench with the straps on, push the bar up and lower it under control to your chest.'), why: t('Mantiene la fuerza del tren superior para maniobras de emergencia, mover equipo pesado y las caminatas espaciales.', 'Keeps upper-body strength for emergency manoeuvres, moving heavy equipment and spacewalks.') },
+  { id: 'run' as Exercise, block: 'cardio', name: t('Carrera con arnés (T2)', 'Harness run (T2)'), sets: '30–45 min', rest: 0, load: t('70–80 % del peso', '70–80 % of weight'), muscles: t('Piernas · Sistema cardiovascular', 'Legs · Cardiovascular system'), sensor: t('Pulso (ECG)', 'Heart rate (ECG)'), goal: 0, cue: t('Trote continuo con intervalos rápidos; el arnés y los bungees te empujan contra la banda.', 'Steady jog with fast intervals; the harness and bungees pull you against the belt.'), why: t('Los impactos estimulan la regeneración del hueso de las piernas y mantienen el volumen de sangre y la capacidad aeróbica.', 'The impacts stimulate leg bone regeneration and keep blood volume and aerobic capacity.') },
+  { id: 'cevis' as Exercise, block: 'cardio', name: t('Bicicleta CEVIS', 'CEVIS cycle'), sets: '15–30 min', rest: 0, load: t('Nivel 8', 'Level 8'), muscles: t('Cuádriceps · Glúteos · Cardio', 'Quads · Glutes · Cardio'), sensor: t('Pulso (ECG)', 'Heart rate (ECG)'), goal: 0, cue: t('Intervalos de alta intensidad con los pies anclados a los pedales y la pelvis sujeta al asiento.', 'High-intensity intervals with feet clipped to the pedals and the pelvis strapped to the seat.'), why: t('Fortalece la resistencia cardiovascular y el flujo de sangre a las piernas sin hacer vibrar la nave.', 'Builds cardiovascular endurance and blood flow to the legs without shaking the spacecraft.') },
 ]
 
 type Rep = { peak: number; seconds: number; full: boolean }
@@ -21,39 +25,6 @@ const norm = (v: Vec) => Math.hypot(...v)
 function angleBetween(a: Vec, b: Vec) {
   const d = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (norm(a) * norm(b))
   return (Math.acos(Math.max(-1, Math.min(1, d))) * 180) / Math.PI
-}
-
-function Figure({ pose, phase, view, live = false, liveAngle = null }: { pose: string; phase: number; view: number; live?: boolean; liveAngle?: number | null }) {
-  const swing = phase % 2 === 0 ? 1 : -1
-  const vars = useMemo(() => {
-    let la = -12, ra = 12, ll = 3, rl = -3, torso = 0
-    if (pose === 'knee') { ll = swing > 0 ? -48 : 5; rl = swing < 0 ? 48 : -5; la = swing * 22; ra = swing * 18 }
-    if (pose === 'hip') { ll = swing > 0 ? -42 : 5; rl = swing < 0 ? 42 : -5; la = -32; ra = 32 }
-    if (pose === 'shoulder') { la = -68 + swing * 20; ra = 68 - swing * 20; torso = swing * 3 }
-    if (pose === 'breath') { la = -28 - phase * 3; ra = 28 + phase * 3; torso = phase % 2 ? 2 : -2 }
-    if (live && liveAngle != null) {
-      // La figura "tu movimiento" copia el ángulo medido por el sensor.
-      if (pose === 'knee' || pose === 'hip') { ll = 3 - liveAngle * 0.7; rl = -3; la = -12; ra = 12 }
-      if (pose === 'shoulder') { la = -12 - liveAngle * 0.85; ra = 12; torso = 0 }
-    }
-    return { '--view': `${view}deg`, '--la': `${la}deg`, '--ra': `${ra}deg`, '--ll': `${ll}deg`, '--rl': `${rl}deg`, '--torso': `${torso}deg` } as React.CSSProperties
-  }, [pose, phase, view, live, liveAngle, swing])
-
-  return <div className={`figure-wrap ${live ? 'live-figure' : 'guide-figure'}`}>
-    <span>{live ? t('TU MOVIMIENTO', 'YOUR MOVEMENT') : t('MOVIMIENTO GUÍA', 'GUIDE MOVEMENT')}</span>
-    <div className="figure3d" style={vars} aria-label={live ? t('Movimiento medido por el sensor', 'Movement measured by the sensor') : t('Movimiento recomendado', 'Recommended movement')}>
-      <div className="body-part head">
-        <i className="hair"/><i className="ear ear-left"/><i className="ear ear-right"/>
-        <i className="eyebrow brow-left"/><i className="eyebrow brow-right"/><i className="eye eye-left"/><i className="eye eye-right"/>
-        <i className="nose"/><i className="mouth"/>
-      </div>
-      <i className="body-part neck"/>
-      <div className="body-part torso"><i className="suit-collar"/><i className="zipper"/><i className="mission-patch">S</i><i className="name-patch">CREW 01</i><i className="utility-pocket"/></div>
-      <div className="body-part arm left"><i className="sleeve-patch">01</i></div><div className="body-part arm right"><i className="sleeve-stripe"/></div>
-      <div className="body-part leg left"><i className="knee-pad"/></div><div className="body-part leg right"><i className="knee-pad"/></div>
-      <i className="body-part joint shoulder-l"/><i className="body-part joint shoulder-r"/><i className="body-part joint hip-l"/><i className="body-part joint hip-r"/>
-    </div>
-  </div>
 }
 
 export default function ExerciseCoach({ sample, astronautId = 'crew' }: { sample: MotionSample | null; astronautId?: string }) {
@@ -76,6 +47,8 @@ export default function ExerciseCoach({ sample, astronautId = 'crew' }: { sample
   const list = routines()
   const routine = list[selected]
   const usesSensor = routine.goal > 0
+  const cycle = useCycle(playing || !usesSensor, routine.id === 'run' ? 0.8 : routine.id === 'cevis' ? 1.2 : 4)
+  const guideF = 0.5 - 0.5 * Math.cos(2 * Math.PI * cycle)
   const accel: Vec | null = sample && sample.ax != null && sample.ay != null && sample.az != null ? [sample.ax, sample.ay, sample.az] : null
   const imuLive = sample?.source === 'hardware' && accel != null && norm(accel) > 2 // en reposo el acelerómetro mide ~9,8 m/s² (gravedad)
   const imuZeros = sample?.source === 'hardware' && (accel == null || norm(accel) <= 2)
@@ -135,7 +108,7 @@ export default function ExerciseCoach({ sample, astronautId = 'crew' }: { sample
   const lastRep = reps[reps.length - 1]
   const breathing = sample?.respiration_rate_bpm ?? null
   const progress = usesSensor && angle != null ? Math.min(100, (angle / routine.goal) * 100) : 0
-  const advice = !usesSensor ? t('Sigue el ritmo de la respiración guiada.', 'Follow the guided breathing rhythm.')
+  const advice = !usesSensor ? ((sample?.heart_rate_bpm ?? 0) > 165 ? t('Pulso muy alto: baja la intensidad un momento.', 'Heart rate very high: ease off for a moment.') : t('Mantén un ritmo constante en zona aeróbica; la app vigila tu pulso.', 'Keep a steady pace in the aerobic zone; the app watches your heart rate.'))
     : !playing ? t('Pulsa "Iniciar rutina" para empezar a contar repeticiones.', 'Press "Start routine" to begin counting reps.')
     : !lastRep ? t(`Sube hasta unos ${routine.goal}° y vuelve a la posición inicial.`, `Go up to about ${routine.goal}° and return to the start position.`)
     : !lastRep.full ? t(`Última repetición: ${lastRep.peak}° de ${routine.goal}°. Intenta subir un poco más.`, `Last rep: ${lastRep.peak}° of ${routine.goal}°. Try to go a little higher.`)
@@ -156,14 +129,18 @@ export default function ExerciseCoach({ sample, astronautId = 'crew' }: { sample
 
     <div className="coach-layout">
       <div className="routine-list" aria-label={t('Rutinas disponibles', 'Available routines')}>
-        <span>{t('RUTINA DE HOY · 18 MIN', 'TODAY’S ROUTINE · 18 MIN')}</span>
-        {list.map((item, index) => <button key={item.id} className={selected === index ? 'selected' : ''} onClick={() => { setSelected(index); resetSession(); setPlaying(false) }}><i>{String(index + 1).padStart(2, '0')}</i><div><b>{item.name}</b><small>{item.target} · {item.duration}</small></div></button>)}
+        <span>{t('PROTOCOLO DIARIO · ARED + T2 / CEVIS', 'DAILY PROTOCOL · ARED + T2 / CEVIS')}</span>
+        {list.map((item, index) => <button key={item.id} className={selected === index ? 'selected' : ''} onClick={() => { setSelected(index); resetSession(); setPlaying(false) }}><i>{String(index + 1).padStart(2, '0')}</i><div><b>{item.name}</b><small>{item.muscles} · {item.sets}</small></div></button>)}
       </div>
 
       <article className="pose-panel">
-        <div className="pose-toolbar"><div><span>{t('EJERCICIO', 'EXERCISE')} {selected + 1} {t('DE', 'OF')} {list.length} · {routine.sensor.toUpperCase()}</span><h3>{routine.name}</h3></div><div className="match"><b>{usesSensor && angle != null ? `${Math.round(angle)}°` : '—'}</b><span>{usesSensor ? t(`ángulo actual · meta ${routine.goal}°`, `current angle · goal ${routine.goal}°`) : t('sin sensor de movimiento', 'no motion sensor')}</span></div></div>
+        <div className="pose-toolbar"><div><span>{t('EJERCICIO ACTIVO', 'ACTIVE EXERCISE')} · {selected + 1}/{list.length} · {routine.block === 'ared' ? t('FUERZA EN ARED', 'ARED STRENGTH') : t('CARDIO T2 / CEVIS', 'T2 / CEVIS CARDIO')}</span><h3>{routine.name} <small className="pose-sets">{routine.sets}{routine.rest ? ` · ${t('descanso', 'rest')} ${routine.rest} s` : ''} · {routine.load}</small></h3></div><div className="match"><b>{usesSensor && angle != null ? `${Math.round(angle)}°` : '—'}</b><span>{usesSensor ? `${routine.sensor} · ${t(`meta ${routine.goal}°`, `goal ${routine.goal}°`)}` : t('guiado por tiempo y pulso', 'guided by time and heart rate')}</span></div></div>
         <div className="pose-stage">
-          <div className="deck-grid"/><Figure pose={routine.id} phase={phase} view={view}/><div className="pose-divider"/><Figure pose={routine.id} phase={phase} view={view} live liveAngle={usesSensor ? angle : null}/>
+          <div className="deck-grid"/>
+          <div className="tf-wrap" style={{ transform: `rotateY(${view}deg)` }}><span>{t('MOVIMIENTO GUÍA', 'GUIDE MOVEMENT')}</span><TrainingFigure exercise={routine.id} f={playing ? guideF : 0.6} cycle={cycle} ghost /></div>
+          <div className="pose-divider dashed"/>
+          <div className="tf-wrap" style={{ transform: `rotateY(${view}deg)` }}><span>{t('TU MOVIMIENTO', 'YOUR MOVEMENT')}</span><TrainingFigure exercise={routine.id} f={usesSensor ? (angle ?? 0) / routine.goal : guideF} cycle={cycle} /></div>
+          <div className="active-muscles"><b><i />{t('Músculos activos', 'Active muscles')}</b><small>{routine.muscles}</small></div>
           <div className="orientation"><span>{t('VISTA', 'VIEW')}</span><input aria-label={t('Rotar vista 3D', 'Rotate 3D view')} type="range" min="-45" max="45" value={view} onChange={e => setView(Number(e.target.value))}/><b>{view}°</b></div>
         </div>
         {usesSensor && <div className="angle-meter"><i style={{ width: `${progress}%` }} /><em /><span>0°</span><span>{t('meta', 'goal')} {routine.goal}°</span></div>}

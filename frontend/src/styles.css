@@ -347,3 +347,17 @@ nav button span.nav-badge{width:auto;font-size:11px;color:#08121F}nav button.act
 @media(max-width:1100px){.hazard-grid{grid-template-columns:repeat(2,1fr)}.profile-grid{grid-template-columns:1fr}}
 @media(max-width:820px){.monitor-grid,.analytics-grid.two{grid-template-columns:1fr}.indicator-table .row{grid-template-columns:1fr 1fr}.indicator-table .row.thead{display:none}.imu-axes{grid-template-columns:repeat(3,1fr)}.base-row{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:620px){.demo-pop{position:fixed;left:16px;right:16px;top:150px;width:auto;max-height:calc(100vh - 170px);overflow:auto}.hazard-grid{grid-template-columns:1fr}.profile-hero{flex-direction:column;align-items:flex-start}.demo-btn{padding:7px 10px}}
+
+/* Entrenamiento: muñeco de perfil (diseño de Chuy) */
+.tf-wrap{width:210px;height:330px;display:grid;justify-items:center;align-content:start;gap:12px;z-index:1;transition:transform .45s ease}.tf-wrap>span{font:9px "Inter",system-ui,sans-serif;color:#91a2b4;letter-spacing:.1em}
+.training-figure{width:210px;height:294px;overflow:visible}.training-figure line{stroke-linecap:round}
+.tf-suit{stroke:#2d78ab}.tf-far{stroke:#123d68}.tf-torso{stroke:#2b78ad}.tf-boot{stroke:#26394b}.tf-patch{fill:#111f2e;stroke:#f2b84b;stroke-width:1.5}
+.tf-skin{fill:#e0b48f}.tf-hair{fill:#2a1c1b}.tf-eye{fill:#192a3b}.tf-ear{fill:#c98d6c}
+.tf-joint{fill:#123c61;stroke:#45d6c5;stroke-width:2;filter:drop-shadow(0 0 4px #45d6c5)}
+.tf-bar circle:first-child{fill:#26394b;stroke:#79a9d8;stroke-width:2}.tf-bar circle:last-child{fill:#79a9d8}
+.tf-prop rect{fill:#192a3b;stroke:#2c5264}.tf-prop line{stroke:#2c5264;stroke-width:4;stroke-linecap:round}.tf-prop .tf-strap{stroke:#f2b84b;stroke-width:2}.tf-prop .tf-bungee{stroke:#45d6c5;stroke-width:1.5;stroke-dasharray:4 3}.tf-prop .tf-ring{fill:none;stroke:#2c5264;stroke-width:2}
+.training-figure.ghost .tf-suit,.training-figure.ghost .tf-torso{stroke:#3d8a8c}.training-figure.ghost .tf-far{stroke:#174b56}.training-figure.ghost .tf-skin{fill:#6da3ad}.training-figure.ghost{opacity:.7}
+.pose-divider.dashed{width:0;border-left:1px dashed #2c5264;background:none}
+.active-muscles{position:absolute;right:18px;bottom:16px;display:grid;gap:4px;z-index:2}.active-muscles b{font:600 11px "Inter",system-ui,sans-serif;color:#e8eef5;display:flex;align-items:center;gap:7px}.active-muscles b i{width:7px;height:7px;border-radius:50%;background:#45d6c5;box-shadow:0 0 8px #45d6c5}.active-muscles small{font:10px "Inter",system-ui,sans-serif;color:#91a2b4;padding-left:14px}
+.pose-sets{font:500 11px "Inter",system-ui,sans-serif;color:#45d6c5;margin-left:6px}
+@media(max-width:620px){.tf-wrap{width:140px}.training-figure{width:140px;height:196px}.active-muscles{right:8px;bottom:44px}}
