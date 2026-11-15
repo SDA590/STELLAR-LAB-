@@ -3,6 +3,7 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <WebServer.h>
 
 #include "secrets.h"
 
@@ -21,6 +22,14 @@ constexpr uint8_t EDR_CAPACITY = 40;
 constexpr uint8_t EDR_MIN_BEATS = 12;
 constexpr uint32_t EDR_MIN_WINDOW_MS = 18000;
 
+// Valores permitidos para la simulacion manual.
+constexpr float MIN_TEMPERATURE_C = 30.0f;
+constexpr float MAX_TEMPERATURE_C = 45.0f;
+constexpr uint16_t MIN_SYSTOLIC_MMHG = 70;
+constexpr uint16_t MAX_SYSTOLIC_MMHG = 220;
+constexpr uint16_t MIN_DIASTOLIC_MMHG = 40;
+constexpr uint16_t MAX_DIASTOLIC_MMHG = 140;
+
 struct EcgState {
   uint16_t raw = 0;
   float filtered = 0;
@@ -29,6 +38,9 @@ struct EcgState {
   uint16_t respRaw = 2048;
   float respirationRateBpm = 0;
   bool respirationValid = false;
+  float temperatureC = 36.7f;
+  uint16_t systolicMmHg = 120;
+  uint16_t diastolicMmHg = 80;
   bool leadsOff = true;
   uint32_t sampleCount = 0;
 };
@@ -36,6 +48,8 @@ struct EcgState {
 EcgState ecgState;
 portMUX_TYPE stateMux = portMUX_INITIALIZER_UNLOCKED;
 WiFiClientSecure secureClient;
+WebServer localServer(80);
+bool manualSendRequested = false;
 
 float baseline = 2048;
 float lowPass = 0;
@@ -261,6 +275,105 @@ bool connectWiFi() {
   return false;
 }
 
+String dashboardHtml(const EcgState& snapshot, bool saved) {
+  String page;
+  page.reserve(3600);
+  page += F("<!doctype html><html lang='es'><head><meta charset='utf-8'>");
+  page += F("<meta name='viewport' content='width=device-width,initial-scale=1'>");
+  page += F("<title>STELLAR Vitals</title><style>");
+  page += F("*{box-sizing:border-box}body{margin:0;background:#04111d;color:#eef7ff;font-family:Arial,sans-serif;min-height:100vh;display:grid;place-items:center;padding:20px}");
+  page += F("main{width:min(520px,100%);background:#091c2b;border:1px solid #1a506d;border-radius:20px;padding:24px;box-shadow:0 20px 60px #0008}");
+  page += F("h1{margin:0 0 6px;color:#71ddff;font-size:25px}.sub{color:#8cb1c7;margin:0 0 22px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}");
+  page += F("label{display:block;color:#a9c9da;font-size:13px}.wide{grid-column:1/-1}input{width:100%;margin-top:7px;padding:12px;border:1px solid #2c617a;border-radius:10px;background:#061521;color:white;font-size:17px}");
+  page += F("button{width:100%;margin-top:20px;padding:14px;border:0;border-radius:11px;background:#20c997;color:#001a16;font-weight:800;font-size:15px;cursor:pointer}");
+  page += F(".saved{background:#123d36;color:#7fffd4;padding:10px;border-radius:9px;margin-bottom:16px}.status{margin-top:18px;padding-top:16px;border-top:1px solid #1a4055;color:#8cb1c7;font-size:13px}.value{color:#fff}");
+  page += F("</style></head><body><main><h1>STELLAR Vitals</h1><p class='sub'>Simulador manual del ESP32</p>");
+  if (saved) {
+    page += F("<div class='saved'>Datos actualizados y preparados para el servidor principal.</div>");
+  }
+  page += F("<form method='post' action='/set'><div class='grid'>");
+  page += F("<label class='wide'>Temperatura corporal (C)<input name='temperature' type='number' min='30' max='45' step='0.1' required value='");
+  page += String(snapshot.temperatureC, 1);
+  page += F("'></label><label>Presion sistolica (mmHg)<input name='systolic' type='number' min='70' max='220' step='1' required value='");
+  page += String(snapshot.systolicMmHg);
+  page += F("'></label><label>Presion diastolica (mmHg)<input name='diastolic' type='number' min='40' max='140' step='1' required value='");
+  page += String(snapshot.diastolicMmHg);
+  page += F("'></label></div><button type='submit'>APLICAR Y ENVIAR DATOS</button></form>");
+  page += F("<div class='status'>ESP32: <span class='value'>");
+  page += WiFi.localIP().toString();
+  page += F("</span><br>API local: <span class='value'>/api/vitals</span></div></main></body></html>");
+  return page;
+}
+
+void handleDashboard() {
+  EcgState snapshot;
+  portENTER_CRITICAL(&stateMux);
+  snapshot = ecgState;
+  portEXIT_CRITICAL(&stateMux);
+  localServer.send(200, "text/html; charset=utf-8",
+                   dashboardHtml(snapshot, localServer.hasArg("saved")));
+}
+
+void handleVitalsJson() {
+  EcgState snapshot;
+  portENTER_CRITICAL(&stateMux);
+  snapshot = ecgState;
+  portEXIT_CRITICAL(&stateMux);
+
+  JsonDocument doc;
+  doc["temperature_c"] = roundf(snapshot.temperatureC * 10) / 10;
+  doc["blood_pressure_systolic_mmhg"] = snapshot.systolicMmHg;
+  doc["blood_pressure_diastolic_mmhg"] = snapshot.diastolicMmHg;
+  String body;
+  serializeJson(doc, body);
+  localServer.send(200, "application/json", body);
+}
+
+void handleSetVitals() {
+  if (!localServer.hasArg("temperature") || !localServer.hasArg("systolic") ||
+      !localServer.hasArg("diastolic")) {
+    localServer.send(400, "text/plain; charset=utf-8", "Faltan valores.");
+    return;
+  }
+
+  const float temperature = localServer.arg("temperature").toFloat();
+  const int systolic = localServer.arg("systolic").toInt();
+  const int diastolic = localServer.arg("diastolic").toInt();
+
+  if (temperature < MIN_TEMPERATURE_C || temperature > MAX_TEMPERATURE_C ||
+      systolic < MIN_SYSTOLIC_MMHG || systolic > MAX_SYSTOLIC_MMHG ||
+      diastolic < MIN_DIASTOLIC_MMHG || diastolic > MAX_DIASTOLIC_MMHG ||
+      diastolic >= systolic) {
+    localServer.send(400, "text/plain; charset=utf-8",
+                     "Valores fuera de rango o presion diastolica mayor/igual a la sistolica.");
+    return;
+  }
+
+  portENTER_CRITICAL(&stateMux);
+  ecgState.temperatureC = temperature;
+  ecgState.systolicMmHg = static_cast<uint16_t>(systolic);
+  ecgState.diastolicMmHg = static_cast<uint16_t>(diastolic);
+  manualSendRequested = true;
+  portEXIT_CRITICAL(&stateMux);
+
+  Serial.printf("Simulacion manual | temperatura=%.1f C | presion=%d/%d mmHg\n",
+                temperature, systolic, diastolic);
+  localServer.sendHeader("Location", "/?saved=1", true);
+  localServer.send(303, "text/plain", "");
+}
+
+void startLocalServer() {
+  localServer.on("/", HTTP_GET, handleDashboard);
+  localServer.on("/api/vitals", HTTP_GET, handleVitalsJson);
+  localServer.on("/set", HTTP_POST, handleSetVitals);
+  localServer.onNotFound([]() {
+    localServer.send(404, "text/plain; charset=utf-8", "Ruta no encontrada.");
+  });
+  localServer.begin();
+  Serial.print("Servidor manual disponible en http://");
+  Serial.println(WiFi.localIP());
+}
+
 bool sendEcgTelemetry(const EcgState& snapshot) {
   if (!connectWiFi()) return false;
 
@@ -281,6 +394,9 @@ bool sendEcgTelemetry(const EcgState& snapshot) {
   } else {
     doc["respiration_rate_bpm"] = nullptr;
   }
+  doc["temperature_c"] = roundf(snapshot.temperatureC * 10) / 10;
+  doc["blood_pressure_systolic_mmhg"] = snapshot.systolicMmHg;
+  doc["blood_pressure_diastolic_mmhg"] = snapshot.diastolicMmHg;
   doc["ax"] = 0; doc["ay"] = 0; doc["az"] = 0;
   doc["gx"] = 0; doc["gy"] = 0; doc["gz"] = 0;
   doc["pos_x_m"] = 0; doc["pos_y_m"] = 0; doc["area_m2"] = 0;
@@ -319,13 +435,24 @@ bool sendEcgTelemetry(const EcgState& snapshot) {
 }
 
 void networkTask(void* parameter) {
+  uint32_t lastSendMs = 0;
   for (;;) {
+    bool shouldSend = false;
     EcgState snapshot;
     portENTER_CRITICAL(&stateMux);
-    snapshot = ecgState;
+    const bool forceSend = manualSendRequested;
+    if (forceSend) manualSendRequested = false;
+    if (forceSend || millis() - lastSendMs >= SEND_PERIOD_MS) {
+      snapshot = ecgState;
+      shouldSend = true;
+    }
     portEXIT_CRITICAL(&stateMux);
-    sendEcgTelemetry(snapshot);
-    vTaskDelay(pdMS_TO_TICKS(SEND_PERIOD_MS));
+
+    if (shouldSend) {
+      sendEcgTelemetry(snapshot);
+      lastSendMs = millis();
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
 }
 
@@ -349,11 +476,15 @@ void setup() {
   WiFi.setSleep(false);
   secureClient.setInsecure();  // Prototipo: cifra HTTPS, pero no valida el certificado.
 
+  connectWiFi();
+  startLocalServer();
+
   xTaskCreatePinnedToCore(ecgTask, "ecg-250hz", 4096, nullptr, 3, nullptr, 1);
   xTaskCreatePinnedToCore(networkTask, "supabase-1hz", 8192, nullptr, 1, nullptr, 0);
 }
 
 void loop() {
-  // El trabajo se divide en dos tareas para que HTTPS no interrumpa el ECG.
-  delay(1000);
+  // Atiende la pagina local; ECG y HTTPS trabajan en tareas separadas.
+  localServer.handleClient();
+  delay(2);
 }
