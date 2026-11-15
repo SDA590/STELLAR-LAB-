@@ -26,7 +26,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
-CACHE_SECONDS = 0.3  # corto: la vista de posición consulta cada 0,5 s
+CACHE_SECONDS = 0.8
 
 # Estado visible en /api/health
 status: dict = {"supabase": "disabled", "last_error": None, "checkins": "disabled"}
