@@ -39,6 +39,60 @@ SIGNALS = {
 }
 LEVEL_ORDER = {"calibrating": 0, "normal": 1, "unreliable": 2, "observe": 3, "alert": 4}
 
+# Límites de SEGURIDAD generales (en reposo), independientes de la línea base personal.
+# La base aprende "tu normal", pero si el sensor o la persona pasan mucho tiempo en valores
+# anormales, la base también se vuelve anormal; estos límites evitan que eso esconda una alerta.
+# Referencias generales: pulso en reposo 50–100 lpm; respiración 10–24 rpm.
+SAFETY = {
+    "heart_rate_bpm": {"observe": (50.0, 100.0), "alert": (40.0, 130.0)},
+    "respiration_rate_bpm": {"observe": (10.0, 24.0), "alert": (8.0, 30.0)},
+}
+
+
+def _safety(key: str, value: float) -> tuple[str, str | None]:
+    """(nivel, "high"/"low"/None) de un valor frente a los límites de seguridad."""
+    obs_lo, obs_hi = SAFETY[key]["observe"]
+    al_lo, al_hi = SAFETY[key]["alert"]
+    if value > al_hi or value < al_lo:
+        return "alert", "high" if value > al_hi else "low"
+    if value > obs_hi or value < obs_lo:
+        return "observe", "high" if value > obs_hi else "low"
+    return "normal", None
+
+
+def _apply_safety(result: dict, samples: list[dict], key: str, source: str, current: float | None, meta: dict) -> dict:
+    """Si el valor actual sale de los límites de seguridad, sube el nivel y lo explica."""
+    result.update(absolute=None, safe_low=SAFETY[key]["observe"][0], safe_high=SAFETY[key]["observe"][1])
+    if current is None:
+        return result
+    level, side = _safety(key, current)
+    if side is None:
+        return result
+    lo, hi = SAFETY[key]["observe"]
+    seconds = 0  # segundos seguidos fuera del rango de seguridad, del mismo lado
+    for s in reversed(samples):
+        v = s.get(key)
+        if s.get("source") != source or s.get("leads_off") or not isinstance(v, (int, float)):
+            break
+        if not ((side == "high" and v > hi) or (side == "low" and v < lo)):
+            break
+        seconds += 1
+    unit, label = meta["unit"], meta["label"]
+    since = tr(f" desde hace {duration_text(seconds)}", f" for {duration_text(seconds)}") if seconds >= 10 else ""
+    note = tr(f"{label} {current:.0f} {unit}: fuera del rango de seguridad general ({lo:.0f}–{hi:.0f} {unit} en reposo){since}.",
+              f"{label} {current:.0f} {unit}: outside the general safety range ({lo:.0f}–{hi:.0f} {unit} at rest){since}.")
+    center = result.get("center")
+    if center is not None and not (lo <= center <= hi):
+        note += tr(f" Tu línea base ({center:.0f} {unit}) también es inusual: revisa el sensor.",
+                   f" Your baseline ({center:.0f} {unit}) is also unusual: check the sensor.")
+    worse = LEVEL_ORDER[level] > LEVEL_ORDER.get(result["level"], 0)
+    result.update(absolute=side, safety_level=level,
+                  level=level if worse else result["level"],
+                  duration_s=max(result.get("duration_s") or 0, seconds),
+                  current=round(current, 1),
+                  message=note if result["level"] in ("normal", "calibrating") else f"{result['message']} {note}")
+    return result
+
 
 def duration_text(seconds: int) -> str:
     return f"{seconds} s" if seconds < 90 else f"{round(seconds / 60)} min"
@@ -81,7 +135,8 @@ def signal_baseline(samples: list[dict], key: str) -> dict:
     if len(reference) < MIN_SAMPLES or not recent:
         result["message"] = tr(f"Calibrando tu línea base de {low_label} ({len(reference)}/{MIN_SAMPLES} lecturas).",
                                f"Calibrating your {low_label} baseline ({len(reference)}/{MIN_SAMPLES} readings).")
-        return result
+        # Aunque la base no esté lista, un valor fuera de los límites de seguridad sí se avisa.
+        return _apply_safety(result, samples, key, source, median(recent) if recent else None, meta)
 
     center = median(reference)
     mad = median(abs(v - center) for v in reference)
@@ -109,7 +164,7 @@ def signal_baseline(samples: list[dict], key: str) -> dict:
     result.update(level=level, center=round(center, 1), sd=round(sd, 2), low=round(center - 2 * sd, 1),
                   high=round(center + 2 * sd, 1), current=round(current, 1), z=round(z, 2),
                   delta=round(delta, 1), duration_s=duration_s, message=message)
-    return result
+    return _apply_safety(result, samples, key, source, current, meta)
 
 
 def baseline(samples: list[dict]) -> dict:

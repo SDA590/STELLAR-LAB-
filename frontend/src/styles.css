@@ -514,3 +514,5 @@ nav button span.nav-badge{width:auto;font-size:11px;color:#08121F}nav button.act
 .ac-note{display:block;margin-top:10px;font-size:10.5px;color:var(--text-2)}
 @media(max-width:1050px){.alert-center{grid-template-columns:1fr}}
 @media(max-width:620px){.alert-bar{flex-wrap:wrap}.alert-bar button{width:100%;justify-content:center}.ac-body{padding-left:14px}.ac-head{grid-template-columns:auto 1fr auto}.ac-head small,.ac-head .ac-ack{display:none}}
+.alert-center .lv,.alert-bar .lv{font:700 13px "Space Grotesk","Inter",sans-serif;letter-spacing:0;color:#08121F}.alert-center .lv.l3,.alert-bar .lv.l3{color:#fff}.alert-center .lv.l0{color:var(--text-2)}
+.metric-alert{white-space:nowrap;display:inline-flex;align-items:center;gap:3px;flex-shrink:0}

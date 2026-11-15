@@ -39,7 +39,7 @@ function screens(): Record<string, { label: string; icon: IconName; subtitle: st
 const screen = (key: string) => screens()[key] ?? { label: key, icon: 'destello-ia' as IconName, subtitle: '' }
 
 function Metric({ label, value, unit, note, tone = 'mint', tag, icon, alert = 0, onAlert }: { label: string; value: string | number; unit?: string; note: string; tone?: string; tag?: string; icon?: IconName; alert?: number; onAlert?: () => void }) {
-  return <article className={`metric ${tone} ${alert ? `has-alert l${alert}` : ''}`}><div className="metric-top"><span>{icon && <Icon name={icon} size={18} />}{label}</span>{alert ? <button className="metric-alert" onClick={onAlert}>{t('ALERTA', 'ALERT')} · N{alert}</button> : tag ? <em className="metric-tag">{tag}</em> : <i />}</div><strong>{value}<small>{unit}</small></strong><p>{note}</p></article>
+  return <article className={`metric ${tone} ${alert ? `has-alert l${alert}` : ''}`}><div className="metric-top"><span>{icon && <Icon name={icon} size={18} />}{label}</span>{alert ? <button className="metric-alert" onClick={onAlert} title={t('Ver la alerta', 'See the alert')}><Icon name="alertas" size={11} />N{alert}</button> : tag ? <em className="metric-tag">{tag}</em> : <i />}</div><strong>{value}<small>{unit}</small></strong><p>{note}</p></article>
 }
 
 function signalNote(signal?: SignalBaseline) {
