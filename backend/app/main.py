@@ -70,6 +70,16 @@ class TelemetryIn(BaseModel):
     timestamp_ms: int | None = None
 
 
+class PhoneIn(BaseModel):
+    """Posición calculada en el celular con pasos + brújula (metros desde el punto 0)."""
+    astronaut_id: AstronautId
+    x_m: float = Field(ge=-500, le=500)
+    y_m: float = Field(ge=-500, le=500)
+    steps: int = Field(default=0, ge=0)
+    battery_pct: int | None = Field(default=None, ge=0, le=100)
+    timestamp_ms: int | None = None
+
+
 class DemoIn(BaseModel):
     """Activa (o quita, con scenario=None) un escenario de demo. Sin astronauta = quitar todos."""
     astronaut_id: AstronautId | None = None
@@ -266,13 +276,27 @@ def _base_simulated_sample(astronaut_id: str, ts: float) -> dict:
     }
 
 
-def real_rows(astronaut_id: str | None, window_s: float) -> list[dict]:
-    """Filas reales (Supabase + POST local) de los últimos `window_s` s, ordenadas por tiempo."""
+# Filas del modo sensor del celular: van a la misma tabla con device_id "phone-<astronauta>".
+# Solo aportan POSICIÓN: nunca cuentan como "hardware vivo" para pulso, respiración ni vitales.
+PHONE_PREFIX = "phone-"
+
+
+def is_phone(row: dict) -> bool:
+    return str(row.get("device_id") or "").startswith(PHONE_PREFIX)
+
+
+def real_rows(astronaut_id: str | None, window_s: float, kind: str = "node") -> list[dict]:
+    """Filas reales (Supabase + POST local) de los últimos `window_s` s, ordenadas por tiempo.
+
+    kind="node": solo el ESP32 (lo normal) · "phone": solo el celular · "all": todas.
+    """
     since = time.time() - window_s
     rows = [r for r in supabase_store.recent_rows(astronaut_id, window_s) if r["_ts"] >= since]
     for key, packets in local_packets.items():
         if astronaut_id in (None, key):
             rows.extend(p for p in packets if p["_ts"] >= since)
+    if kind != "all":
+        rows = [r for r in rows if is_phone(r) == (kind == "phone")]
     rows.sort(key=lambda r: r["_ts"])
     return rows
 
@@ -297,15 +321,20 @@ def timeline(astronaut_id: str, limit: int) -> list[dict]:
     """
     rows = real_rows(astronaut_id, ASTRONAUT_WINDOW_S)
     end = floor(time.time())
-    items: list[dict] = []
+    return [public(row) if row else simulated_sample(astronaut_id, end - limit + 1 + i)
+            for i, row in enumerate(live_per_second(rows, limit))]
+
+
+def live_per_second(rows: list[dict], limit: int) -> list[dict | None]:
+    """Para cada uno de los últimos `limit` segundos: la última fila 'viva' en ese momento, o None."""
+    end = floor(time.time())
+    items: list[dict | None] = []
     index = -1
     for second in range(end - limit + 1, end + 1):
         while index + 1 < len(rows) and rows[index + 1]["_ts"] < second + 1:
             index += 1
-        if index >= 0 and second + 1 - rows[index]["_ts"] <= LIVE_WINDOW_S:
-            items.append(public(rows[index]))
-        else:
-            items.append(simulated_sample(astronaut_id, second))
+        live = index >= 0 and second + 1 - rows[index]["_ts"] <= LIVE_WINDOW_S
+        items.append(rows[index] if live else None)
     return items
 
 
@@ -526,14 +555,74 @@ def telemetry(packet: TelemetryIn) -> dict:
     return {"accepted": True, "astronaut_id": astronaut_id, "samples": len(local_packets[astronaut_id])}
 
 
+# Más lejos que esto, la posición del MPU6050 se da por "desbocada" (deriva de la integración)
+# y se usa la otra fuente. El cable de seguridad de referencia mide 25 m.
+MPU_MAX_DISTANCE_M = 40.0
+POSITION_ORDER = {"mpu": ("mpu", "phone"), "phone": ("phone", "mpu"), "sim": ()}
+
+
+def _mpu_status(row: dict | None) -> str:
+    if row is None:
+        return "no_data"
+    if row.get("pos_x_m") is None or row.get("pos_y_m") is None:
+        return "no_position"
+    distance = sqrt(float(row["pos_x_m"]) ** 2 + float(row["pos_y_m"]) ** 2 + float(row.get("pos_z_m") or 0) ** 2)
+    return "unreliable" if distance > MPU_MAX_DISTANCE_M else "ok"
+
+
 @app.get("/api/position")
-def get_position(astronaut_id: AstronautId = "bresnik", limit: int = 120, demo: bool = False) -> dict:
-    """Posición XYZ (m) respecto a la estación, distancia y estela para la vista 3D."""
+def get_position(astronaut_id: AstronautId = "bresnik", limit: int = 120, demo: bool = False,
+                 prefer: Literal["mpu", "phone", "sim"] = "mpu") -> dict:
+    """Posición XYZ (m) respecto a la cápsula, distancia y estela para la vista 3D.
+
+    Fuente: `prefer` elige la preferida (MPU6050 del ESP32 o celular). Si la preferida no
+    tiene datos (o el MPU está desbocado), se usa la otra; si ninguna sirve, la simulación.
+    """
     limit = max(10, min(limit, MAX_HISTORY))
-    samples = timeline(astronaut_id, limit)
-    track = analysis.position_track(samples, ASTRONAUTS[astronaut_id]["phase"], demo,
+    if demo:
+        prefer = "sim"
+    window = limit + LIVE_WINDOW_S + 2
+    mpu_rows = live_per_second(real_rows(astronaut_id, window, "node"), limit)
+    phone_rows = live_per_second(real_rows(astronaut_id, window, "phone"), limit)
+    samples = []
+    for mpu, phone in zip(mpu_rows, phone_rows):
+        chosen = {"source": "simulation"}
+        for name in POSITION_ORDER[prefer]:
+            if name == "mpu" and _mpu_status(mpu) == "ok":
+                chosen = {**public(mpu), "source": "hardware"}
+                break
+            if name == "phone" and phone is not None:
+                chosen = {**public(phone), "source": "phone"}
+                break
+        samples.append(chosen)
+    track = analysis.position_track(samples, ASTRONAUTS[astronaut_id]["phase"], prefer == "sim",
                                     lambda ts: sim_position(astronaut_id, ts))
-    return {"astronaut_id": astronaut_id, "demo": demo, **track}
+    status = {"mpu": _mpu_status(mpu_rows[-1]), "phone": "ok" if phone_rows[-1] is not None else "no_data"}
+    used = {"hardware": "mpu", "phone": "phone"}.get(track["source"], "sim")
+    return {"astronaut_id": astronaut_id, "demo": prefer == "sim", "prefer": prefer, "used": used,
+            "fallback": used != prefer, "sensors": status, "steps": samples[-1].get("steps") if used == "phone" else None,
+            **track}
+
+
+@app.post("/api/phone-position")
+def post_phone_position(body: PhoneIn) -> dict:
+    """El celular (modo muñeca) envía su posición de pasos + brújula una vez por segundo."""
+    now = time.time()
+    distance = round(sqrt(body.x_m ** 2 + body.y_m ** 2), 2)
+    row = {
+        "astronaut_id": body.astronaut_id, "device_id": f"{PHONE_PREFIX}{body.astronaut_id}",
+        # Sin ECG: el celular solo aporta posición (estas filas nunca se usan para signos vitales).
+        "ecg_raw": 0, "leads_off": True, "resp_raw": 0,
+        "pos_x_m": round(body.x_m, 2), "pos_y_m": round(body.y_m, 2), "pos_z_m": 0,
+        "distance_from_origin_m": distance, "outside_safe_radius": distance > analysis.CABIN_RANGE_M,
+        "steps": body.steps, "battery_pct": body.battery_pct if body.battery_pct is not None else 100,
+        "timestamp_ms": body.timestamp_ms,
+    }
+    if supabase_store.insert_telemetry(row):
+        return {"saved": True, "storage": "supabase"}
+    local_packets[body.astronaut_id].append(
+        {**row, "source": "hardware", "received_at": datetime.fromtimestamp(now, timezone.utc).isoformat(), "_ts": now})
+    return {"saved": True, "storage": "memory"}
 
 
 # --------------------------------------------------------------------------- #

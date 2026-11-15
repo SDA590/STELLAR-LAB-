@@ -63,7 +63,7 @@ def parse_ts(value: str) -> float:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
 
 
-def _request(table: str, params: dict, body: dict | None = None) -> list[dict]:
+def _request(table: str, params: dict, body: dict | None = None, prefer: str = "return=representation") -> list[dict]:
     """GET (sin body) o POST (con body) a la API REST de Supabase."""
     base_url, key = _config()
     url = f"{base_url}/rest/v1/{table}?{urlencode(params)}"
@@ -72,7 +72,7 @@ def _request(table: str, params: dict, body: dict | None = None) -> list[dict]:
     data = None
     if body is not None:
         data = json.dumps(body).encode("utf-8")
-        headers.update({"Content-Type": "application/json", "Prefer": "return=representation"})
+        headers.update({"Content-Type": "application/json", "Prefer": prefer})
     request = Request(url, data=data, headers=headers, method="POST" if body is not None else "GET")
     with urlopen(request, timeout=4) as response:
         return json.loads(response.read().decode("utf-8") or "[]")
@@ -124,6 +124,19 @@ def recent_rows(astronaut_id: str | None, window_s: float) -> list[dict]:
     status.update(supabase="ok", last_error=None)
     _cache[cache_key] = (now, clean)
     return clean
+
+
+def insert_telemetry(row: dict) -> bool:
+    """Inserta una fila en `telemetry` (la usa el modo sensor del celular). False si falla."""
+    if not configured():
+        return False
+    try:
+        _request("telemetry", {}, row, prefer="return=minimal")
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+        status.update(supabase="error", last_error=f"insert {getattr(exc, 'code', type(exc).__name__)}")
+        return False
+    _cache.clear()  # que la siguiente lectura ya vea la fila nueva
+    return True
 
 
 # --------------------------------------------------------------------------- #

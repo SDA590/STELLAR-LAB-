@@ -232,14 +232,14 @@ def position_track(samples: list[dict], phase: float, demo: bool, sim_fn=None) -
     points = []
     end = floor(time.time())
     for i, s in enumerate(samples):
-        real = s.get("source") == "hardware" and s.get("pos_x_m") is not None and s.get("pos_y_m") is not None
+        real = s.get("source") in ("hardware", "phone") and s.get("pos_x_m") is not None and s.get("pos_y_m") is not None
         if real and not demo:
-            x, y, z, src = float(s["pos_x_m"]), float(s["pos_y_m"]), float(s.get("pos_z_m") or 0), "hardware"
+            x, y, z, src = float(s["pos_x_m"]), float(s["pos_y_m"]), float(s.get("pos_z_m") or 0), s["source"]
         else:
             ts = end - (len(samples) - 1 - i)  # un punto por segundo
             x, y, z = sim_fn(ts) if sim_fn else eva_position(phase, ts)
             src = "simulation"
-        flag = s.get("outside_safe_radius") if src == "hardware" else None
+        flag = s.get("outside_safe_radius") if src != "simulation" else None
         points.append({"x": x, "y": y, "z": z, "source": src, "outside": flag})
     last = points[-1] if points else {"x": 0, "y": 0, "z": 0, "source": "simulation"}
     distance = sqrt(last["x"] ** 2 + last["y"] ** 2 + last["z"] ** 2)
