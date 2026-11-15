@@ -19,7 +19,7 @@ import json
 import time
 from math import sqrt
 
-from .analysis import CABIN_HALF_M, duration_text, edge_distance
+from .analysis import SAFE_DISTANCE_M, TETHER_LIMIT_M, duration_text
 from .ctx import tr
 
 def who(level: int) -> str:
@@ -87,22 +87,21 @@ def evaluate(base: dict, sample: dict, vitals: dict, checkins: list[dict], now: 
                            tr("Quédate quieto 30 s y vuelve a mirar el panel.", "Stay still for 30 s and look at the panel again.")],
                           "closed", None, [tr("leads_off = verdadero", "leads_off = true")]))
 
-    # --- Posición dentro de la cabina ----------------------------------
+    # --- Distancia a la estación durante una EVA ---------------------------
     try:
         x, y, z = (float(sample.get(k) or 0) for k in ("pos_x_m", "pos_y_m", "pos_z_m"))
+        distance = sqrt(x * x + y * y + z * z)
     except (TypeError, ValueError):
-        x = y = z = 0.0
-    edge = edge_distance(x, y, z)
-    if edge > CABIN_HALF_M:
-        where = f"X {x:.2f} · Y {y:.2f} · Z {z:.2f} m"
-        out.append(_alert("cabin-out", 1, tr("Posición fuera de la cabina", "Position outside the cabin"),
-                          tr(f"La posición estimada ({where}) queda fuera de la cabina de 2 × 2 m. Nadie atraviesa la pared: "
-                             "la estimación del MPU6050 acumuló error.",
-                             f"The estimated position ({where}) is outside the 2 × 2 m cabin. Nobody goes through the wall: "
-                             "the MPU6050 estimate built up error."),
-                          [tr("Vuelve al centro de la cabina y recalibra el nodo (punto 0).", "Go back to the cabin centre and recalibrate the node (point 0)."),
-                           tr("Revisa que el sensor esté bien sujeto.", "Check that the sensor is firmly attached.")],
-                          "closed", "EVA", [tr(f"a {edge - CABIN_HALF_M:.2f} m más allá de la pared", f"{edge - CABIN_HALF_M:.2f} m beyond the wall")]))
+        distance = 0.0
+    if distance > TETHER_LIMIT_M:
+        out.append(_alert("eva-far", 2, tr("Lejos de la estación", "Far from the station"),
+                          tr(f"Estás a {distance:.1f} m de la escotilla: más que el cable de seguridad de referencia ({TETHER_LIMIT_M} m).",
+                             f"You are {distance:.1f} m from the hatch: beyond the reference safety tether ({TETHER_LIMIT_M} m)."),
+                          [tr("Detén el avance y vuelve hacia la estación.", "Stop moving out and head back to the station."),
+                           tr("Confirma tu posición con el oficial de la EVA.", "Confirm your position with the EVA officer."),
+                           tr("Revisa el anclaje del cable de seguridad.", "Check the safety tether anchor.")],
+                          "distance", "EVA", [tr(f"distancia {distance:.1f} m", f"distance {distance:.1f} m"),
+                                              tr(f"zona segura ≤ {SAFE_DISTANCE_M} m", f"safe zone ≤ {SAFE_DISTANCE_M} m")]))
 
     # --- Pulso y respiración frente a la línea base ------------------------
     if hr_up and rr_up and "alert" in (hr.get("level"), rr.get("level")):

@@ -7,7 +7,7 @@ const legend = () => [
   { level: 2, title: t('Nivel 2 · Avisa al oficial médico', 'Level 2 · Tell the medical officer'), text: t('El cambio es mayor o se combinan varias señales. Lo revisa la tripulación.', 'The change is larger or several signals combine. The crew reviews it.') },
   { level: 3, title: t('Nivel 3 · Consulta con Tierra', 'Level 3 · Consult Earth'), text: t('Se genera un reporte prioritario para los médicos en Tierra.', 'A priority report is generated for the flight surgeons on Earth.') },
 ]
-const linkLabel = (link: string) => link === 'Wellness' ? t('Ir a Bienestar', 'Go to Wellness') : link === 'EVA' ? t('Ver posición en cabina', 'View cabin position') : t('Ir a Entrenamiento', 'Go to Training')
+const linkLabel = (link: string) => link === 'Wellness' ? t('Ir a Bienestar', 'Go to Wellness') : link === 'EVA' ? t('Ver posición EVA', 'View EVA position') : t('Ir a Entrenamiento', 'Go to Training')
 
 export default function Alerts({ alerts, onOpen }: { alerts: Alert[]; onOpen: (screen: string) => void }) {
   const active = alerts.filter(a => a.level >= 1)

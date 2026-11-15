@@ -69,7 +69,7 @@ class TelemetryIn(BaseModel):
 class DemoIn(BaseModel):
     """Activa (o quita, con scenario=None) un escenario de demo. Sin astronauta = quitar todos."""
     astronaut_id: AstronautId | None = None
-    scenario: Literal["fatigue", "stress", "fever", "leads_off", "drift"] | None = None
+    scenario: Literal["fatigue", "stress", "fever", "leads_off", "eva_far"] | None = None
 
 
 class LoginIn(BaseModel):
@@ -190,7 +190,7 @@ SCENARIO_EFFECTS = {
     "fatigue": {"heart": 18, "respiration": 0.6},
     "stress": {"heart": 30, "respiration": 9},
     "fever": {"heart": 28, "respiration": 2},
-    "drift": {"heart": 0, "respiration": 0},
+    "eva_far": {"heart": 6, "respiration": 1},
     "leads_off": {"heart": 0, "respiration": 0},
 }
 # Chequeo "virtual" que acompaña a algunos escenarios (como si el astronauta lo hubiera llenado).
@@ -198,16 +198,17 @@ SCENARIO_CHECKINS = {
     "fatigue": {"sleep_hours": 4.5, "mood": 3, "stress": 2},
     "stress": {"sleep_hours": 5.5, "mood": 2, "stress": 5},
 }
-DRIFT_TARGET = (1.45, 0.5, 0.25)  # escenario "posición desviada": la estimación se sale de la cabina
+EVA_FAR_RADIUS_M = 29.0
 
 
 def sim_position(astronaut_id: str, ts: float) -> tuple[float, float, float]:
-    """Movimiento simulado en la cabina; con el escenario `drift` la estimación se va fuera de la pared."""
+    """Trayectoria EVA simulada; con el escenario `eva_far` se aleja hasta ~29 m."""
     x, y, z = analysis.eva_position(ASTRONAUTS[astronaut_id]["phase"], ts)
     name, _, k = ctx.scenario(astronaut_id, ts)
-    if name == "drift" and k > 0:
-        tx, ty, tz = DRIFT_TARGET
-        x, y, z = round(x + k * (tx - x), 2), round(y + k * (ty - y), 2), round(z + k * (tz - z), 2)
+    if name == "eva_far" and k > 0:
+        r = sqrt(x * x + y * y + z * z) or 1.0
+        scale = 1 + k * (EVA_FAR_RADIUS_M / r - 1)
+        x, y, z = round(x * scale, 2), round(y * scale, 2), round(z * scale, 2)
     return x, y, z
 
 
