@@ -174,8 +174,10 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
     const clock = new THREE.Clock()
     const loop = () => {
       frame = requestAnimationFrame(loop)
-      const t = clock.getElapsedTime()
-      astronaut.position.lerp(target, 0.06) // movimiento suave entre lecturas (1 por segundo)
+      const dt = Math.min(clock.getDelta(), 0.1)
+      const t = clock.elapsedTime
+      // Se acerca a la última lectura en ~0,3 s (antes ~1 s), igual a cualquier velocidad de pantalla.
+      astronaut.position.lerp(target, 1 - Math.exp(-dt * 10))
       astronaut.rotation.y = t * 0.3; astronaut.rotation.z = Math.sin(t * 0.7) * 0.15
       tether.geometry.setFromPoints([new THREE.Vector3(), astronaut.position.clone()]); tether.computeLineDistances()
       stars.rotation.y = t * 0.002
@@ -197,18 +199,20 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
     }
   }, [])
 
-  // Datos: una consulta por segundo
+  // Datos: una consulta cada 0,5 s (sin encimar consultas si la red va lenta)
   useEffect(() => {
-    let alive = true
+    let alive = true, busy = false
     const load = async () => {
+      if (busy) return
+      busy = true
       try {
         const res = await apiFetch(`/api/position?astronaut_id=${astronautId}&limit=120${demo ? '&demo=true' : ''}`)
         if (!res.ok) throw new Error(String(res.status))
         const data: Position = await res.json()
         if (alive) { setPos(data); setError(false); sceneRef.current?.setData(data) }
-      } catch { if (alive) setError(true) }
+      } catch { if (alive) setError(true) } finally { busy = false }
     }
-    load(); const timer = window.setInterval(load, 1000)
+    load(); const timer = window.setInterval(load, 500)
     return () => { alive = false; window.clearInterval(timer) }
   }, [astronautId, demo])
 
