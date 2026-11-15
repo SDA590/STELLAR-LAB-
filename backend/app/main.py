@@ -6,7 +6,7 @@ import os
 import time
 from collections import deque
 from datetime import datetime, timezone
-from math import floor, pi, sin
+from math import floor, pi, sin, sqrt
 from typing import Literal
 
 from fastapi import FastAPI, Request, Response
@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from . import alerts, analysis, supabase_store
+from . import alerts, analysis, ctx, supabase_store
 
 supabase_store.load_env_file()
 
@@ -60,6 +60,12 @@ class TelemetryIn(BaseModel):
     steps: int = Field(default=0, ge=0)
     battery_pct: int = Field(default=100, ge=0, le=100)
     timestamp_ms: int | None = None
+
+
+class DemoIn(BaseModel):
+    """Activa (o quita, con scenario=None) un escenario de demo. Sin astronauta = quitar todos."""
+    astronaut_id: AstronautId | None = None
+    scenario: Literal["fatigue", "stress", "fever", "leads_off", "eva_far"] | None = None
 
 
 class LoginIn(BaseModel):
@@ -123,8 +129,11 @@ def is_authenticated(request: Request) -> bool:
 @app.middleware("http")
 async def require_password(request: Request, call_next):
     path = request.url.path
+    # Idioma de los textos del backend y escenarios de demo de este navegador.
+    ctx.LANG.set(ctx.parse_lang(request.headers.get("x-stellar-lang")))
+    ctx.SCENARIOS.set(ctx.parse_scenarios(request.cookies.get(ctx.DEMO_COOKIE)))
     if path.startswith("/api") and path not in PUBLIC_API and not is_authenticated(request):
-        return JSONResponse({"detail": "Se requiere contraseña"}, status_code=401)
+        return JSONResponse({"detail": ctx.tr("Se requiere contraseña", "Password required")}, status_code=401)
     return await call_next(request)
 
 
@@ -171,15 +180,59 @@ def _noise(t: float, seed: float, amplitude: float) -> float:
     return (x - floor(x) - 0.5) * 2 * amplitude
 
 
+# Escenarios de demo: cuánto sube cada señal SIMULADA con el escenario al 100 %.
+# (El cambio aparece poco a poco en 30 s; nunca toca las filas reales del ESP32.)
+SCENARIO_EFFECTS = {
+    "fatigue": {"heart": 18, "respiration": 0.6},
+    "stress": {"heart": 30, "respiration": 9},
+    "fever": {"heart": 28, "respiration": 2},
+    "eva_far": {"heart": 6, "respiration": 1},
+    "leads_off": {"heart": 0, "respiration": 0},
+}
+# Chequeo "virtual" que acompaña a algunos escenarios (como si el astronauta lo hubiera llenado).
+SCENARIO_CHECKINS = {
+    "fatigue": {"sleep_hours": 4.5, "mood": 3, "stress": 2},
+    "stress": {"sleep_hours": 5.5, "mood": 2, "stress": 5},
+}
+EVA_FAR_RADIUS_M = 29.0
+
+
+def sim_position(astronaut_id: str, ts: float) -> tuple[float, float, float]:
+    """Trayectoria EVA simulada; con el escenario `eva_far` se aleja hasta ~29 m."""
+    x, y, z = analysis.eva_position(ASTRONAUTS[astronaut_id]["phase"], ts)
+    name, _, k = ctx.scenario(astronaut_id, ts)
+    if name == "eva_far" and k > 0:
+        r = sqrt(x * x + y * y + z * z) or 1.0
+        scale = 1 + k * (EVA_FAR_RADIUS_M / r - 1)
+        x, y, z = round(x * scale, 2), round(y * scale, 2), round(z * scale, 2)
+    return x, y, z
+
+
 def simulated_sample(astronaut_id: str, ts: float) -> dict:
     """Muestra simulada para el instante `ts` (segundos Unix). Siempre da lo mismo para el mismo ts."""
+    sample = _base_simulated_sample(astronaut_id, ts)
+    name, _, k = ctx.scenario(astronaut_id, ts)
+    if not name or k <= 0:
+        return sample
+    effect = SCENARIO_EFFECTS[name]
+    sample["scenario"] = name
+    sample["heart_rate_bpm"] = round(sample["heart_rate_bpm"] + k * effect["heart"], 1)
+    sample["respiration_rate_bpm"] = round(sample["respiration_rate_bpm"] + k * effect["respiration"], 1)
+    if name == "leads_off":
+        # Electrodo suelto: el AD8232 marca LO y la señal queda plana y sin pulso calculable.
+        sample.update(leads_off=True, heart_rate_bpm=None, respiration_rate_bpm=None,
+                      ecg_raw=int(4000 + _noise(ts % 86400, 7, 40)))
+    return sample
+
+
+def _base_simulated_sample(astronaut_id: str, ts: float) -> dict:
     config = ASTRONAUTS[astronaut_id]
     t = ts % 86400
     phase = config["phase"]
     beat = sin(2 * pi * (config["heart"] / 60) * t + phase)
     qrs = max(0.0, beat) ** 18
     respiratory_wave = sin(2 * pi * (config["respiration"] / 60) * t + phase)
-    x, y, z = analysis.eva_position(phase, ts)
+    x, y, z = sim_position(astronaut_id, ts)
     return {
         "astronaut_id": astronaut_id,
         "device_id": f"sim-{astronaut_id}",
@@ -358,13 +411,20 @@ def get_checkins(astronaut_id: AstronautId = "bresnik", days: float = 7) -> dict
 @app.get("/api/vitals")
 def get_vitals(astronaut_id: AstronautId = "bresnik") -> dict:
     """Presión y temperatura: simuladas cada 30 min + lo que el astronauta anotó a mano."""
-    return vitals_for(astronaut_id, checkins_for(astronaut_id, 1)[0])
+    simulated = current_sample(astronaut_id)["source"] == "simulation"
+    return vitals_for(astronaut_id, checkins_for(astronaut_id, 1)[0], simulated)
 
 
-def vitals_for(astronaut_id: str, manual: list[dict]) -> dict:
+def vitals_for(astronaut_id: str, manual: list[dict], simulated: bool = True) -> dict:
     now = time.time()
     items = analysis.simulated_vitals(astronaut_id, now)
     since = items[0]["ts"]
+    name, started, k = ctx.scenario(astronaut_id, now)
+    if simulated and name == "fever" and k > 0:
+        # Escenario fiebre: la medición automática de control marca la temperatura alta.
+        base = analysis.VITALS_BASE[astronaut_id]
+        items.append(analysis.vitals_item(max(started, now - 5), "simulation", base["sys"] + round(6 * k),
+                                          base["dia"] + round(3 * k), round(base["temp"] + 2.0 * k, 1)))
     for row in manual:
         if row.get("systolic_mmhg") is None and row.get("temperature_c") is None:
             continue
@@ -392,7 +452,13 @@ def assess(astronaut_id: str) -> dict:
     samples = timeline(astronaut_id, analysis.BASELINE_WINDOW_S)
     base = safe_baseline(samples)
     checkins, _ = checkins_for(astronaut_id, 1)
-    vitals = vitals_for(astronaut_id, checkins)
+    simulated = samples[-1].get("source") == "simulation"
+    name, started, _ = ctx.scenario(astronaut_id)
+    if simulated and name in SCENARIO_CHECKINS:
+        virtual = {"astronaut_id": astronaut_id, "created_at": datetime.fromtimestamp(started, timezone.utc).isoformat(),
+                   "source": "demo", **SCENARIO_CHECKINS[name]}
+        checkins = [virtual, *checkins]
+    vitals = vitals_for(astronaut_id, checkins, simulated)
     try:
         items = alerts.evaluate(base, samples[-1], vitals, checkins)
     except Exception:  # noqa: BLE001  (una regla rota no debe tumbar el panel)
@@ -432,5 +498,45 @@ def get_position(astronaut_id: AstronautId = "bresnik", limit: int = 120, demo: 
     """Posición XYZ (m) respecto a la estación, distancia y estela para la vista 3D."""
     limit = max(10, min(limit, MAX_HISTORY))
     samples = timeline(astronaut_id, limit)
-    track = analysis.position_track(samples, ASTRONAUTS[astronaut_id]["phase"], demo)
+    track = analysis.position_track(samples, ASTRONAUTS[astronaut_id]["phase"], demo,
+                                    lambda ts: sim_position(astronaut_id, ts))
     return {"astronaut_id": astronaut_id, "demo": demo, **track}
+
+
+# --------------------------------------------------------------------------- #
+# Escenarios de demostración (solo afectan a la SIMULACIÓN)
+# --------------------------------------------------------------------------- #
+def demo_state(items: dict[str, tuple[str, float]]) -> dict:
+    now = time.time()
+    out = []
+    for astronaut_id, (name, started) in items.items():
+        if astronaut_id not in ASTRONAUTS:
+            continue
+        live = current_sample(astronaut_id)["source"] == "hardware"
+        out.append({"astronaut_id": astronaut_id, "scenario": name, "started": started,
+                    "intensity": round(min(1.0, max(0.0, (now - started) / ctx.RAMP_S)), 2), "live_hardware": live})
+    return {"items": out, "available": list(ctx.SCENARIO_IDS), "ramp_s": ctx.RAMP_S}
+
+
+@app.get("/api/demo")
+def get_demo() -> dict:
+    return demo_state(ctx.SCENARIOS.get())
+
+
+@app.post("/api/demo")
+def post_demo(body: DemoIn, request: Request, response: Response) -> dict:
+    items = dict(ctx.SCENARIOS.get())
+    if body.astronaut_id is None:
+        items = {}
+    elif body.scenario is None:
+        items.pop(body.astronaut_id, None)
+    else:
+        items[body.astronaut_id] = (body.scenario, time.time())
+    https = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    if items:
+        response.set_cookie(ctx.DEMO_COOKIE, ctx.dump_scenarios(items), max_age=ctx.SCENARIO_MAX_AGE_S,
+                            httponly=True, secure=https, samesite="lax", path="/")
+    else:
+        response.delete_cookie(ctx.DEMO_COOKIE, path="/")
+    ctx.SCENARIOS.set(items)
+    return demo_state(items)
