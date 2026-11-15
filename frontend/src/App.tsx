@@ -117,7 +117,7 @@ export default function App() {
   const movement = series.map(s => s.ax == null || s.ay == null || s.az == null ? null : Math.sqrt(s.ax ** 2 + s.ay ** 2 + s.az ** 2))
   const overall = levelInfo(baseline?.level)
   const bp = vitals?.latest_bp, temp = vitals?.latest_temp
-  const sourceTag = (source?: string) => source === 'manual' ? 'MANUAL' : t('SIMULADO', 'SIMULATED')
+  const sourceTag = (source?: string) => source === 'manual' ? 'MANUAL' : source === 'hardware' ? 'ESP32' : t('SIMULADO', 'SIMULATED')
   const issues = [hrBase, rrBase].filter(s => s && ['observe', 'alert', 'unreliable'].includes(s.level)) as SignalBaseline[]
 
   if (!profile) return <ProfilePicker profiles={profiles} onSelect={selected => { setProfile(selected); setActive(selected.access === 'nasa' ? 'Mission Control' : 'Dashboard') }} />

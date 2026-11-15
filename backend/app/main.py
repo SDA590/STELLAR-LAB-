@@ -56,6 +56,10 @@ class TelemetryIn(BaseModel):
     pos_x_m: float = 0
     pos_y_m: float = 0
     pos_z_m: float | None = None
+    # Temperatura y presión que el ESP32 envía (hoy las fija Ricardo desde la página local del ESP32).
+    temperature_c: float | None = Field(default=None, ge=30, le=45)
+    blood_pressure_systolic_mmhg: float | None = Field(default=None, ge=60, le=250)
+    blood_pressure_diastolic_mmhg: float | None = Field(default=None, ge=30, le=150)
     area_m2: float = Field(default=0, ge=0)
     steps: int = Field(default=0, ge=0)
     battery_pct: int = Field(default=100, ge=0, le=100)
@@ -410,7 +414,7 @@ def get_checkins(astronaut_id: AstronautId = "bresnik", days: float = 7) -> dict
 
 @app.get("/api/vitals")
 def get_vitals(astronaut_id: AstronautId = "bresnik") -> dict:
-    """Presión y temperatura: simuladas cada 30 min + lo que el astronauta anotó a mano."""
+    """Presión y temperatura: del ESP32 si las envía; si no, simuladas cada 30 min. Más lo anotado a mano."""
     simulated = current_sample(astronaut_id)["source"] == "simulation"
     return vitals_for(astronaut_id, checkins_for(astronaut_id, 1)[0], simulated)
 
@@ -431,6 +435,7 @@ def vitals_for(astronaut_id: str, manual: list[dict], simulated: bool = True) ->
         ts = supabase_store.parse_ts(row["created_at"])
         if ts >= since:
             items.append(analysis.vitals_item(ts, "manual", row.get("systolic_mmhg"), row.get("diastolic_mmhg"), row.get("temperature_c")))
+    items.extend(hardware_vitals(astronaut_id))
     items.sort(key=lambda r: r["ts"])
     latest_bp = next((r for r in reversed(items) if r["systolic_mmhg"] is not None), None)
     latest_temp = next((r for r in reversed(items) if r["temperature_c"] is not None), None)
@@ -442,6 +447,30 @@ def vitals_for(astronaut_id: str, manual: list[dict], simulated: bool = True) ->
         "latest_temp": latest_temp,
         "items": items,
     }
+
+
+HARDWARE_VITALS_STEP_S = 60  # en el gráfico, una lectura del ESP32 por minuto
+
+
+def hardware_vitals(astronaut_id: str) -> list[dict]:
+    """Temperatura y presión que llegaron del ESP32 en los últimos ~10 min (una por minuto + la última).
+
+    Si el ESP32 deja de enviarlas, al pasar esa ventana se vuelve a la medición simulada.
+    """
+    rows = [r for r in real_rows(astronaut_id, ASTRONAUT_WINDOW_S)
+            if r.get("temperature_c") is not None or r.get("blood_pressure_systolic_mmhg") is not None]
+    picked: dict[int, dict] = {}
+    for row in rows:  # de la más antigua a la más nueva: queda la última de cada minuto
+        picked[int(row["_ts"] // HARDWARE_VITALS_STEP_S)] = row
+    out = []
+    for row in picked.values():
+        sys_, dia = row.get("blood_pressure_systolic_mmhg"), row.get("blood_pressure_diastolic_mmhg")
+        temp = row.get("temperature_c")
+        out.append(analysis.vitals_item(row["_ts"], "hardware",
+                                        round(float(sys_)) if sys_ is not None else None,
+                                        round(float(dia)) if dia is not None else None,
+                                        round(float(temp), 1) if temp is not None else None))
+    return out
 
 
 # --------------------------------------------------------------------------- #

@@ -161,6 +161,8 @@ envíe `0` en el acelerómetro; en cuanto lleguen datos reales, cambian solas a 
 | `ax`, `ay`, `az` | aceleración cruda del MPU6050 (incluye la gravedad: en reposo una de ellas ≈ 9,8) | m/s² |
 | `gx`, `gy`, `gz` | giroscopio | °/s |
 | `pos_x_m`, `pos_y_m`, `pos_z_m` | posición estimada desde el **punto 0** (donde se encendió/calibró, = la estación) | m |
+| `temperature_c` | temperatura corporal (hoy: valor de prueba fijado en la página local del ESP32) | °C (30–45) |
+| `blood_pressure_systolic_mmhg`, `blood_pressure_diastolic_mmhg` | presión arterial (hoy: valor de prueba de la página local) | mmHg |
 
 - **Entrenamiento:** la app calcula el ángulo de la pierna o brazo comparando `ax, ay, az` con la
   postura neutra que el astronauta calibra con un botón. **No hace falta** calcular el ángulo en el ESP32.
@@ -170,5 +172,8 @@ envíe `0` en el acelerómetro; en cuanto lleguen datos reales, cambian solas a 
   estación (botón o al arrancar).
 - **Importante:** antes de enviar `pos_z_m`, Santiago debe ejecutar `docs/sql/003_pos_z.sql` en
   Supabase. Si se envía un campo que no existe en la tabla, Supabase rechaza la fila completa (error 400).
+- **Temperatura y presión:** necesitan `docs/sql/004_vitales_esp32.sql` ejecutado en Supabase (mismo motivo:
+  sin esas columnas Supabase rechaza la fila completa). Cuando llegan, la app las usa en lugar de la
+  medición simulada y las marca como **ESP32**; si dejan de llegar 10 min, vuelve a la simulada.
 - Si un dato no se mide, envía `null` (no `0`): así el panel muestra "sin sensor" en vez de un valor falso.
   Lo mismo para `battery_pct` mientras no se mida la batería.
