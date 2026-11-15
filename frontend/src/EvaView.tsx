@@ -17,8 +17,8 @@ const ZONE = {
   fuera: { color: '#F16F78' },
 }
 const zoneText = (z: keyof typeof ZONE) => ({
-  cabina: { label: t('Dentro de la cabina', 'Inside the cabin'), text: t('Está dentro de la cápsula (±2 m del punto 0).', 'Inside the capsule (±2 m from point 0).') },
-  cerca: { label: t('Zona cercana', 'Near zone'), text: t('Fuera de la cápsula, cerca de la escotilla.', 'Outside the capsule, near the hatch.') },
+  cabina: { label: t('Dentro de la cabina', 'Inside the cabin'), text: t('A 2 m o menos del punto 0: está dentro de la cápsula.', 'Within 2 m of point 0: inside the capsule.') },
+  cerca: { label: t('Fuera de la cabina', 'Outside the cabin'), text: t('A más de 2 m del punto 0, en la zona cercana a la cápsula.', 'More than 2 m from point 0, in the zone near the capsule.') },
   atencion: { label: t('Atención', 'Attention'), text: t('Te acercas al largo del cable de seguridad.', 'You are nearing the safety tether length.') },
   fuera: { label: t('Fuera de rango', 'Out of range'), text: t('Más lejos que el cable de seguridad de referencia: regresa hacia la cápsula.', 'Beyond the reference safety tether: head back to the capsule.') },
 })[z]
@@ -146,7 +146,7 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
     const tetherSphere = new THREE.Mesh(new THREE.SphereGeometry(25, 24, 12), zoneMat('#F2B84B')); scene.add(tetherSphere)
     const zero = textSprite("Punto 0", "#45D6C5", 44); zero.position.set(0, 3.2, 0); scene.add(zero)
 
-    scene.add(buildCapsule()) // a escala real: cápsula de ~4 m de base; cabina ±2 m alrededor del punto 0
+    scene.add(buildCapsule()) // a escala real: cápsula de ~4 m de base; cabina = 2 m alrededor del punto 0
     const astronaut = buildAstronaut(); scene.add(astronaut)
 
     const tetherMat = new THREE.LineDashedMaterial({ color: '#45D6C5', dashSize: 0.6, gapSize: 0.4 })
@@ -245,7 +245,7 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
       </article>
       <article className="eva-note">
         <span>{t('CÓMO SE MIDE', 'HOW IT IS MEASURED')}</span>
-        <p>{t('El punto 0 es el centro de la cápsula (cabina de ~2 × 2 m): dentro de ±2 m en X, Y y Z el astronauta está dentro. El ESP32 estima X, Y y Z integrando el acelerómetro MPU6050 desde ese punto, y lo envía a Supabase una vez por segundo.', 'Point 0 is the centre of the capsule (~2 × 2 m cabin): within ±2 m in X, Y and Z the astronaut is inside. The ESP32 estimates X, Y and Z by integrating the MPU6050 accelerometer from that point, and sends it to Supabase once per second.')}</p>
+        <p>{t('El punto 0 es el centro de la cápsula (cabina de ~2 × 2 m): a 2 m o menos de ese punto el astronauta está dentro; más lejos, está fuera. El ESP32 estima X, Y y Z integrando el acelerómetro MPU6050 desde ese punto (el botón «Restablecer posición cero» de su página lo vuelve a 0) y lo envía a Supabase una vez por segundo.', 'Point 0 is the centre of the capsule (~2 × 2 m cabin): within 2 m of that point the astronaut is inside; further away, outside. The ESP32 estimates X, Y and Z by integrating the MPU6050 accelerometer from that point (the «Reset zero position» button on its page sets it back to 0) and sends it to Supabase once per second.')}</p>
         <p>{t('Integrar la aceleración acumula error con el tiempo: es una', 'Integrating acceleration builds up error over time: it is an')} <b>{t('estimación', 'estimate')}</b>. {t('Una misión real lo combinaría con balizas de radio (UWB) en la cápsula.', 'A real mission would combine it with radio beacons (UWB) on the capsule.')}</p>
       </article>
     </div>

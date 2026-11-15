@@ -56,6 +56,10 @@ class TelemetryIn(BaseModel):
     pos_x_m: float = 0
     pos_y_m: float = 0
     pos_z_m: float | None = None
+    # Calculados por el ESP32 (firmware v2.0): distancia al punto 0 y si salió del radio de 2 m.
+    distance_from_origin_m: float | None = Field(default=None, ge=0)
+    movement_detected: bool | None = None
+    outside_safe_radius: bool | None = None
     # Temperatura y presión que el ESP32 envía (hoy las fija Ricardo desde la página local del ESP32).
     temperature_c: float | None = Field(default=None, ge=30, le=45)
     blood_pressure_systolic_mmhg: float | None = Field(default=None, ge=60, le=250)

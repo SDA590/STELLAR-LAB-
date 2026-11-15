@@ -161,6 +161,9 @@ envíe `0` en el acelerómetro; en cuanto lleguen datos reales, cambian solas a 
 | `ax`, `ay`, `az` | aceleración cruda del MPU6050 (incluye la gravedad: en reposo una de ellas ≈ 9,8) | m/s² |
 | `gx`, `gy`, `gz` | giroscopio | °/s |
 | `pos_x_m`, `pos_y_m`, `pos_z_m` | posición estimada desde el **punto 0** (donde se encendió/calibró, = la estación) | m |
+| `distance_from_origin_m` | distancia al punto 0 calculada por el ESP32 | m |
+| `movement_detected` | si el MPU6050 detecta movimiento en ese momento | true/false |
+| `outside_safe_radius` | `true` si está a más de 2 m del punto 0 (fuera de la cabina). La app usa este valor | true/false |
 | `temperature_c` | temperatura corporal (hoy: valor de prueba fijado en la página local del ESP32) | °C (30–45) |
 | `blood_pressure_systolic_mmhg`, `blood_pressure_diastolic_mmhg` | presión arterial (hoy: valor de prueba de la página local) | mmHg |
 
@@ -170,8 +173,10 @@ envíe `0` en el acelerómetro; en cuanto lleguen datos reales, cambian solas a 
 - **Posición 3D:** el ESP32 integra la aceleración (sin la gravedad) dos veces para estimar X, Y, Z
   desde el punto 0. Acumula error: conviene reiniciar a 0 cuando el astronauta está quieto en la
   estación (botón o al arrancar).
-- **Importante:** antes de enviar `pos_z_m`, Santiago debe ejecutar `docs/sql/003_pos_z.sql` en
-  Supabase. Si se envía un campo que no existe en la tabla, Supabase rechaza la fila completa (error 400).
+- **Dentro / fuera de la cabina:** a 2 m o menos del punto 0 = dentro de la cápsula; más lejos = fuera.
+  El firmware v2.0 lo calcula (`outside_safe_radius`) y la app muestra lo mismo en «Posición EVA».
+- **Importante:** antes de cargar el firmware v2.0, Santiago debe ejecutar `docs/sql/005_posicion_mpu6050.sql` en
+  Supabase (crea `pos_z_m`, `distance_from_origin_m`, `movement_detected` y `outside_safe_radius`). Si se envía un campo que no existe en la tabla, Supabase rechaza la fila completa (error 400).
 - **Temperatura y presión:** necesitan `docs/sql/004_vitales_esp32.sql` ejecutado en Supabase (mismo motivo:
   sin esas columnas Supabase rechaza la fila completa). Cuando llegan, la app las usa en lugar de la
   medición simulada y las marca como **ESP32**; si dejan de llegar 10 min, vuelve a la simulada.
