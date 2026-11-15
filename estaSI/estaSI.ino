@@ -32,7 +32,7 @@ constexpr float SAFE_RADIUS_M = 2.0f;
 
 constexpr uint16_t SAMPLE_RATE_HZ = 250;
 constexpr TickType_t SAMPLE_PERIOD = pdMS_TO_TICKS(1000 / SAMPLE_RATE_HZ);
-constexpr uint32_t SEND_PERIOD_MS = 1000;
+constexpr uint32_t SEND_PERIOD_MS = 500;
 constexpr uint32_t REFRACTORY_MS = 300;
 constexpr uint32_t WARMUP_MS = 2500;
 constexpr uint8_t EDR_CAPACITY = 40;
@@ -78,7 +78,9 @@ struct EcgState {
 EcgState ecgState;
 portMUX_TYPE stateMux = portMUX_INITIALIZER_UNLOCKED;
 WiFiClientSecure secureClient;
+HTTPClient supabaseHttp;
 WebServer localServer(80);
+bool supabaseHttpInitialized = false;
 bool manualSendRequested = false;
 bool resetPositionRequested = false;
 
@@ -181,6 +183,7 @@ void setEstimatedPositionZero() {
   ecgState.posZ = 0;
   ecgState.distanceFromOrigin = 0;
   ecgState.outsideSafeRadius = false;
+  manualSendRequested = true;
   portEXIT_CRITICAL(&stateMux);
 }
 
@@ -536,8 +539,32 @@ void ecgTask(void* parameter) {
   }
 }
 
+void resetSupabaseConnection() {
+  if (supabaseHttpInitialized) {
+    supabaseHttp.end();
+    supabaseHttpInitialized = false;
+  }
+  secureClient.stop();
+}
+
+bool ensureSupabaseConnection() {
+  if (supabaseHttpInitialized) return true;
+
+  supabaseHttp.setTimeout(8000);
+  supabaseHttp.setReuse(true);
+  if (!supabaseHttp.begin(secureClient, SUPABASE_URL)) {
+    Serial.println("No se pudo iniciar la conexion HTTPS persistente.");
+    return false;
+  }
+  supabaseHttp.addHeader("Content-Type", "application/json");
+  supabaseHttp.addHeader("apikey", SUPABASE_KEY);
+  supabaseHttpInitialized = true;
+  return true;
+}
+
 bool connectWiFi() {
   if (WiFi.status() == WL_CONNECTED) return true;
+  resetSupabaseConnection();
   WiFi.disconnect();
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Conectando Wi-Fi");
@@ -558,7 +585,7 @@ bool connectWiFi() {
 
 String dashboardHtml(const EcgState& snapshot, bool saved) {
   String page;
-  page.reserve(4800);
+  page.reserve(6200);
   page += F("<!doctype html><html lang='es'><head><meta charset='utf-8'>");
   page += F("<meta name='viewport' content='width=device-width,initial-scale=1'>");
   page += F("<title>STELLAR Vitals</title><style>");
@@ -580,21 +607,22 @@ String dashboardHtml(const EcgState& snapshot, bool saved) {
   page += F("'></label><label>Presion diastolica (mmHg)<input name='diastolic' type='number' min='40' max='140' step='1' required value='");
   page += String(snapshot.diastolicMmHg);
   page += F("'></label></div><button type='submit'>APLICAR Y ENVIAR DATOS</button></form>");
-  page += F("<div class='motion'><strong>Movimiento estimado</strong><br>X: <span class='value'>");
+  page += F("<div class='motion'><strong>Movimiento estimado</strong><br>X: <span id='posX' class='value'>");
   page += String(snapshot.posX, 2);
-  page += F(" m</span> &nbsp; Y: <span class='value'>");
+  page += F(" m</span> &nbsp; Y: <span id='posY' class='value'>");
   page += String(snapshot.posY, 2);
-  page += F(" m</span> &nbsp; Z: <span class='value'>");
+  page += F(" m</span> &nbsp; Z: <span id='posZ' class='value'>");
   page += String(snapshot.posZ, 2);
-  page += F(" m</span><br>Distancia desde cero: <span class='value'>");
+  page += F(" m</span><br>Distancia desde cero: <span id='distance' class='value'>");
   page += String(snapshot.distanceFromOrigin, 2);
-  page += F(" m</span><br>Estado: <strong class='");
+  page += F(" m</span><br>Estado: <strong id='motionState' class='");
   page += snapshot.outsideSafeRadius ? F("alert'>FUERA DEL RADIO DE 2 M")
                                      : F("safe'>DENTRO DEL RADIO DE 2 M");
   page += F("</strong><form method='post' action='/reset-position'><button class='secondary' type='submit'>RESTABLECER POSICION CERO</button></form></div>");
   page += F("<div class='status'>ESP32: <span class='value'>");
   page += WiFi.localIP().toString();
-  page += F("</span><br>API local: <span class='value'>/api/vitals</span></div></main></body></html>");
+  page += F("</span><br>API local: <span class='value'>/api/vitals</span></div>");
+  page += F("<script>async function refreshMotion(){try{const r=await fetch('/api/motion',{cache:'no-store'});if(!r.ok)return;const d=await r.json();document.getElementById('posX').textContent=Number(d.pos_x_m||0).toFixed(2);document.getElementById('posY').textContent=Number(d.pos_y_m||0).toFixed(2);document.getElementById('posZ').textContent=Number(d.pos_z_m||0).toFixed(2);document.getElementById('distance').textContent=Number(d.distance_from_origin_m||0).toFixed(2);const s=document.getElementById('motionState');if(d.outside_safe_radius){s.textContent='FUERA DEL RADIO DE 2 M';s.className='alert';}else{s.textContent='DENTRO DEL RADIO DE 2 M';s.className='safe';}}catch(e){}}refreshMotion();setInterval(refreshMotion,500);</script></main></body></html>");
   return page;
 }
 
@@ -746,15 +774,8 @@ bool sendEcgTelemetry(const EcgState& snapshot) {
   String body;
   serializeJson(doc, body);
 
-  HTTPClient http;
-  http.setTimeout(8000);
-  if (!http.begin(secureClient, SUPABASE_URL)) {
-    Serial.println("No se pudo iniciar HTTPS.");
-    return false;
-  }
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("apikey", SUPABASE_KEY);
-  const int code = http.POST(body);
+  if (!ensureSupabaseConnection()) return false;
+  const int code = supabaseHttp.POST(body);
   if (code == 201) {
     if (snapshot.respirationValid) {
       Serial.printf("ECG enviado | raw=%u | bpm=%.1f | resp=%.1f | electrodos=%s\n",
@@ -766,10 +787,14 @@ bool sendEcgTelemetry(const EcgState& snapshot) {
                     snapshot.raw, snapshot.heartRateBpm,
                     snapshot.leadsOff ? "OFF" : "OK");
     }
+  } else if (code > 0) {
+    Serial.printf("Error Supabase %d: %s\n", code,
+                  supabaseHttp.getString().c_str());
   } else {
-    Serial.printf("Error Supabase %d: %s\n", code, http.getString().c_str());
+    Serial.printf("Error HTTPS %d: %s. Se reconectara.\n", code,
+                  HTTPClient::errorToString(code).c_str());
+    resetSupabaseConnection();
   }
-  http.end();
   return code == 201;
 }
 
