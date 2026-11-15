@@ -1,68 +1,117 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import Icon from './Icon'
 import { t } from './i18n'
 import TrainingFigure, { useCycle, type Exercise } from './TrainingFigure'
+
+// Pantalla "Entrenamiento" con el diseño de Chuy (the choy/INTERFAZ ENTRENAMIENTO.png) y el
+// contexto de Entrenamiento.txt: fuerza en ARED (90 min) + cardio en T2 / CEVIS (60 min) = 2 h 30 min.
+// El MPU6050 (si llega del ESP32) mide el ángulo y cuenta repeticiones; si no, se simula.
 
 type MotionSample = {
   source?: string; received_at?: string; ax: number | null; ay: number | null; az: number | null
   gx: number | null; gy: number | null; gz: number | null; respiration_rate_bpm: number | null; heart_rate_bpm: number | null
 }
+type Block = 'ared' | 'cardio'
+type Load = { value: number; step: number; min: number; max: number; unit: 'kg' | '%' | 'level' }
+type Routine = {
+  id: Exercise; block: Block; name: string; muscles: string; sets: number; reps: number | null; badge: string; rest: number
+  minutes: number; load: Load; goal: number; sensor: string; cue: string; guide: string; why: string
+}
 
-// Rutinas del protocolo diario (Entrenamiento.txt): fuerza en ARED y cardio en T2 / CEVIS.
-// goal = ángulo objetivo (grados) respecto a la postura neutra calibrada; 0 = se guía por tiempo y pulso.
-const routines = () => [
-  { id: 'squat' as Exercise, block: 'ared', name: t('Sentadillas', 'Squats'), sets: '4×10', rest: 90, load: '180 kg', muscles: t('Cuádriceps · Glúteos · Core', 'Quads · Glutes · Core'), sensor: t('MPU6050 en el muslo', 'MPU6050 on the thigh'), goal: 80, cue: t('Desciende con el torso estable y la espalda neutra, y empuja desde los talones contra la resistencia del ARED.', 'Go down with a steady torso and neutral back, and push through your heels against the ARED resistance.'), why: t('Estimula fémur, cadera y pelvis para frenar la pérdida de hueso y conserva cuádriceps y glúteos para sostener tu peso al volver a la Tierra.', 'Loads the femur, hips and pelvis to slow bone loss and keeps quads and glutes strong enough to carry your weight back on Earth.') },
-  { id: 'deadlift' as Exercise, block: 'ared', name: t('Peso muerto', 'Deadlift'), sets: '3×12', rest: 90, load: '160 kg', muscles: t('Cadena posterior · Core', 'Posterior chain · Core'), sensor: t('MPU6050 en el muslo', 'MPU6050 on the thigh'), goal: 60, cue: t('Eleva la barra desde la plataforma extendiendo cadera y tronco, con el abdomen contraído.', 'Lift the bar from the platform by extending hips and trunk, with the core braced.'), why: t('Protege la densidad de las vértebras lumbares y fortalece isquiotibiales, glúteos y erectores: evita dolor de espalda y atrofia postural.', 'Protects lumbar bone density and strengthens hamstrings, glutes and spinal erectors: prevents back pain and postural atrophy.') },
-  { id: 'calf' as Exercise, block: 'ared', name: t('Elevación de talones', 'Calf raises'), sets: '3×20', rest: 60, load: '90 kg', muscles: t('Gastrocnemios · Sóleo', 'Gastrocnemius · Soleus'), sensor: t('MPU6050 en el pie', 'MPU6050 on the foot'), goal: 20, cue: t('Con la barra en los hombros y las puntas en la plataforma, sube al máximo y baja lento.', 'With the bar on your shoulders and toes on the platform, rise all the way and lower slowly.'), why: t('Evita la pérdida rápida de masa en las pantorrillas, clave para el equilibrio y para caminar tras el aterrizaje.', 'Prevents fast calf muscle loss, key for balance and walking after landing.') },
-  { id: 'bench' as Exercise, block: 'ared', name: t('Press de banca', 'Bench press'), sets: '3×10', rest: 90, load: '70 kg', muscles: t('Pectorales · Deltoides · Tríceps', 'Chest · Deltoids · Triceps'), sensor: t('MPU6050 en el antebrazo', 'MPU6050 on the forearm'), goal: 85, cue: t('Acostado en el banco con las correas puestas, empuja la barra hacia arriba y bájala controlada al pecho.', 'Lying on the bench with the straps on, push the bar up and lower it under control to your chest.'), why: t('Mantiene la fuerza del tren superior para maniobras de emergencia, mover equipo pesado y las caminatas espaciales.', 'Keeps upper-body strength for emergency manoeuvres, moving heavy equipment and spacewalks.') },
-  { id: 'run' as Exercise, block: 'cardio', name: t('Carrera con arnés (T2)', 'Harness run (T2)'), sets: '30–45 min', rest: 0, load: t('70–80 % del peso', '70–80 % of weight'), muscles: t('Piernas · Sistema cardiovascular', 'Legs · Cardiovascular system'), sensor: t('Pulso (ECG)', 'Heart rate (ECG)'), goal: 0, cue: t('Trote continuo con intervalos rápidos; el arnés y los bungees te empujan contra la banda.', 'Steady jog with fast intervals; the harness and bungees pull you against the belt.'), why: t('Los impactos estimulan la regeneración del hueso de las piernas y mantienen el volumen de sangre y la capacidad aeróbica.', 'The impacts stimulate leg bone regeneration and keep blood volume and aerobic capacity.') },
-  { id: 'cevis' as Exercise, block: 'cardio', name: t('Bicicleta CEVIS', 'CEVIS cycle'), sets: '15–30 min', rest: 0, load: t('Nivel 8', 'Level 8'), muscles: t('Cuádriceps · Glúteos · Cardio', 'Quads · Glutes · Cardio'), sensor: t('Pulso (ECG)', 'Heart rate (ECG)'), goal: 0, cue: t('Intervalos de alta intensidad con los pies anclados a los pedales y la pelvis sujeta al asiento.', 'High-intensity intervals with feet clipped to the pedals and the pelvis strapped to the seat.'), why: t('Fortalece la resistencia cardiovascular y el flujo de sangre a las piernas sin hacer vibrar la nave.', 'Builds cardiovascular endurance and blood flow to the legs without shaking the spacecraft.') },
+const routines = (): Routine[] => [
+  { id: 'squat', block: 'ared', name: t('Sentadillas', 'Squats'), muscles: t('Cuádriceps · Glúteos · Core', 'Quads · Glutes · Core'), sets: 4, reps: 10, badge: '4x10', rest: 90, minutes: 35,
+    load: { value: 180, step: 5, min: 20, max: 272, unit: 'kg' }, goal: 80, sensor: t('MPU6050 en el muslo', 'MPU6050 on the thigh'),
+    cue: t('Desciende con el torso estable y empuja desde los talones contra la resistencia del ARED.', 'Go down with a steady torso and push through your heels against the ARED resistance.'),
+    guide: t('Barra sobre los hombros; flexiona cadera y rodillas de forma controlada con la espalda neutra. Descanso de 90 s entre series y carga según prescripción médica.', 'Bar on your shoulders; bend hips and knees under control with a neutral back. 90 s rest between sets, load as medically prescribed.'),
+    why: t('Estimula fémur, cadera y pelvis para frenar la pérdida de hueso y conserva cuádriceps y glúteos para sostener tu peso al volver a la Tierra.', 'Loads femur, hips and pelvis to slow bone loss and keeps quads and glutes strong enough to carry your weight back on Earth.') },
+  { id: 'deadlift', block: 'ared', name: t('Peso muerto', 'Deadlift'), muscles: t('Cadena posterior · Core', 'Posterior chain · Core'), sets: 4, reps: 8, badge: '4x8', rest: 90, minutes: 30,
+    load: { value: 160, step: 5, min: 20, max: 272, unit: 'kg' }, goal: 60, sensor: t('MPU6050 en el muslo', 'MPU6050 on the thigh'),
+    cue: t('Eleva la barra desde la plataforma extendiendo cadera y tronco, con el abdomen contraído.', 'Lift the bar from the platform by extending hips and trunk, with the core braced.'),
+    guide: t('Extiende cadera y tronco manteniendo el core contraído para estabilizar el cuerpo sin gravedad. Descanso de 90 s.', 'Extend hips and trunk keeping the core braced to stabilise the body without gravity. 90 s rest.'),
+    why: t('Protege la densidad de las vértebras lumbares y fortalece toda la cadena posterior: evita dolor de espalda y atrofia postural.', 'Protects lumbar bone density and strengthens the whole posterior chain: prevents back pain and postural atrophy.') },
+  { id: 'calf', block: 'ared', name: t('Elevación de talones', 'Calf raises'), muscles: t('Gastrocnemios · Sóleo', 'Gastrocnemius · Soleus'), sets: 3, reps: 15, badge: '3x15', rest: 60, minutes: 25,
+    load: { value: 90, step: 5, min: 20, max: 272, unit: 'kg' }, goal: 20, sensor: t('MPU6050 en el pie', 'MPU6050 on the foot'),
+    cue: t('Con la barra en los hombros y las puntas en la plataforma, sube al máximo y baja lento.', 'With the bar on your shoulders and toes on the platform, rise all the way and lower slowly.'),
+    guide: t('Extensión máxima de tobillos con descenso lento y controlado. Descanso de 60 s.', 'Full ankle extension with a slow, controlled lowering. 60 s rest.'),
+    why: t('Evita la pérdida rápida de masa en las pantorrillas, clave para el equilibrio y para caminar tras el aterrizaje.', 'Prevents fast calf muscle loss, key for balance and walking after landing.') },
+  { id: 'run', block: 'cardio', name: t('Carrera con arnés', 'Harness run'), muscles: t('Piernas · Sistema cardiovascular', 'Legs · Cardiovascular system'), sets: 1, reps: null, badge: '30 min', rest: 0, minutes: 30,
+    load: { value: 62, step: 1, min: 30, max: 100, unit: 'kg' }, goal: 0, sensor: t('Pulso (ECG)', 'Heart rate (ECG)'),
+    cue: t('Trote continuo con intervalos rápidos; el arnés y los bungees te empujan contra la banda.', 'Steady jog with fast intervals; the harness and bungees pull you against the belt.'),
+    guide: t('30 a 45 min en la cinta T2. Chaleco y cinturón con bungees que aplican del 70 % al 80 % de tu peso contra la banda.', '30 to 45 min on the T2 treadmill. Vest and belt with bungees applying 70–80 % of your weight against the belt.'),
+    why: t('Los impactos estimulan la regeneración del hueso de las piernas y mantienen el volumen de sangre y la capacidad aeróbica.', 'The impacts stimulate leg bone regeneration and keep blood volume and aerobic capacity.') },
+  { id: 'cevis', block: 'cardio', name: t('Pedaleo en bicicleta estática CEVIS', 'CEVIS stationary cycling'), muscles: t('Cuádriceps · Glúteos · Sistema cardiovascular', 'Quads · Glutes · Cardiovascular system'), sets: 1, reps: null, badge: '15–30 min', rest: 0, minutes: 30,
+    load: { value: 8, step: 1, min: 1, max: 12, unit: 'level' }, goal: 0, sensor: t('Pulso (ECG)', 'Heart rate (ECG)'),
+    cue: t('Intervalos de alta intensidad con los pies anclados a los pedales y la pelvis sujeta al asiento.', 'High-intensity intervals with feet clipped to the pedals and the pelvis strapped to the seat.'),
+    guide: t('15 a 30 min en formato HIIT vigilando la frecuencia cardiaca en tiempo real.', '15 to 30 min HIIT while watching your heart rate in real time.'),
+    why: t('Fortalece la resistencia cardiovascular y el flujo de sangre a las piernas sin hacer vibrar la nave.', 'Builds cardiovascular endurance and blood flow to the legs without shaking the spacecraft.') },
 ]
+const DAILY_MIN = 150 // 2 h 30 min
 
-type Rep = { peak: number; seconds: number; full: boolean }
 type Vec = [number, number, number]
-
+type Rep = { peak: number; seconds: number; full: boolean }
 const norm = (v: Vec) => Math.hypot(...v)
 function angleBetween(a: Vec, b: Vec) {
   const d = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (norm(a) * norm(b))
   return (Math.acos(Math.max(-1, Math.min(1, d))) * 180) / Math.PI
 }
+const mmss = (s: number) => `${String(Math.floor(Math.max(0, s) / 60)).padStart(2, '0')}:${String(Math.max(0, s) % 60).padStart(2, '0')}`
+const hhmm = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(Math.floor(min % 60)).padStart(2, '0')}`
+const loadText = (l: Load) => l.unit === 'level' ? `${t('Nivel', 'Level')} ${l.value}` : `${l.value} ${l.unit}`
+
+// Avance del día (casillas, series hechas, cargas) guardado en este navegador.
+type Day = { done: Record<string, boolean>; sets: Record<string, number>; loads: Record<string, number> }
+const dayKey = (aid: string) => `stellar-training-${aid}-${new Date().toISOString().slice(0, 10)}`
+function loadDay(aid: string): Day {
+  try { const raw = localStorage.getItem(dayKey(aid)); if (raw) return JSON.parse(raw) } catch { /* sin almacenamiento */ }
+  return { done: {}, sets: {}, loads: {} }
+}
 
 export default function ExerciseCoach({ sample, astronautId = 'crew' }: { sample: MotionSample | null; astronautId?: string }) {
-  const [selected, setSelected] = useState(0)
-  const [phase, setPhase] = useState(0)
-  const [playing, setPlaying] = useState(false)
-  const [view, setView] = useState(-12)
-  const [elapsed, setElapsed] = useState(0)
+  const list = routines()
+  const [filter, setFilter] = useState<'all' | Block>('all')
+  const [selected, setSelected] = useState<Exercise>('squat')
+  const [technique, setTechnique] = useState<Exercise | null>(null)
+  const [day, setDay] = useState<Day>(() => loadDay(astronautId))
+  const [phase, setPhase] = useState<'idle' | 'set' | 'rest'>('idle')
+  const [clock, setClock] = useState(0) // segundos de la serie en curso o del descanso que queda
   const [reps, setReps] = useState<Rep[]>([])
   const [angle, setAngle] = useState<number | null>(null)
   const [neutral, setNeutral] = useState<Vec | null>(() => {
     try { const raw = localStorage.getItem(`stellar-neutral-${astronautId}`); return raw ? JSON.parse(raw) : null } catch { return null }
   })
   const [demoChoice, setDemoChoice] = useState<boolean | null>(null)
-  const repState = useRef<{ up: boolean; peak: number; start: number }>({ up: false, peak: 0, start: 0 })
-  const lastSeen = useRef<string>('')
-  const playingRef = useRef(playing)
-  playingRef.current = playing
+  const repState = useRef({ up: false, peak: 0, start: 0 })
+  const lastSeen = useRef('')
+  const setActive = phase === 'set'
+  const activeRef = useRef(setActive); activeRef.current = setActive
 
-  const list = routines()
-  const routine = list[selected]
+  const routine = list.find(r => r.id === selected)!
+  const index = list.indexOf(routine)
+  const load: Load = { ...routine.load, value: day.loads[routine.id] ?? routine.load.value }
+  const setsDone = Math.min(day.sets[routine.id] ?? 0, routine.sets)
   const usesSensor = routine.goal > 0
-  const cycle = useCycle(playing || !usesSensor, routine.id === 'run' ? 0.8 : routine.id === 'cevis' ? 1.2 : 4)
-  const guideF = 0.5 - 0.5 * Math.cos(2 * Math.PI * cycle)
   const accel: Vec | null = sample && sample.ax != null && sample.ay != null && sample.az != null ? [sample.ax, sample.ay, sample.az] : null
-  const imuLive = sample?.source === 'hardware' && accel != null && norm(accel) > 2 // en reposo el acelerómetro mide ~9,8 m/s² (gravedad)
-  const imuZeros = sample?.source === 'hardware' && (accel == null || norm(accel) <= 2)
+  const imuLive = sample?.source === 'hardware' && accel != null && norm(accel) > 2 // con gravedad, en reposo ≈ 9,8 m/s²
   const demo = demoChoice ?? !imuLive
+  const cycle = useCycle(setActive, routine.id === 'run' ? 0.8 : routine.id === 'cevis' ? 1.2 : 4)
+  const guideF = 0.5 - 0.5 * Math.cos(2 * Math.PI * cycle)
 
+  useEffect(() => { try { localStorage.setItem(dayKey(astronautId), JSON.stringify(day)) } catch { /* sin almacenamiento */ } }, [day, astronautId])
+
+  // Reloj: sube durante la serie, baja durante el descanso.
   useEffect(() => {
-    if (!playing) return
-    const timer = window.setInterval(() => { setPhase(p => (p + 1) % 4); setElapsed(s => s + 1) }, 1000)
+    if (phase === 'idle') return
+    const timer = window.setInterval(() => setClock(c => {
+      if (phase === 'set') return c + 1
+      if (c <= 1) { setPhase('idle'); return 0 }
+      return c - 1
+    }), 1000)
     return () => window.clearInterval(timer)
-  }, [playing])
+  }, [phase])
 
   const registerAngle = (value: number, now: number, goal: number) => {
     setAngle(value)
-    if (!playingRef.current || goal <= 0) return
+    if (!activeRef.current || goal <= 0) return
     const st = repState.current
     if (!st.up && value >= goal * 0.5) { st.up = true; st.peak = value; st.start = now }
     else if (st.up) {
@@ -74,7 +123,7 @@ export default function ExerciseCoach({ sample, astronautId = 'crew' }: { sample
     }
   }
 
-  // Ángulo REAL: cada lectura nueva del ESP32 (se ignoran las repetidas)
+  // Ángulo REAL: cada lectura nueva del ESP32.
   useEffect(() => {
     if (demo || !imuLive || !accel) return
     const key = sample?.received_at ?? ''
@@ -83,81 +132,129 @@ export default function ExerciseCoach({ sample, astronautId = 'crew' }: { sample
     registerAngle(neutral ? angleBetween(accel, neutral) : 0, Date.now(), routine.goal)
   }, [sample?.received_at, demo, imuLive, neutral, routine.goal])
 
-  // Ángulo SIMULADO para la demo: sigue la guía con pequeñas imperfecciones
+  // Ángulo SIMULADO (demo) mientras hay una serie en curso.
   useEffect(() => {
-    if (!demo || !usesSensor) return
+    if (!demo || !usesSensor || !setActive) return
     const t0 = Date.now()
     const timer = window.setInterval(() => {
-      const sec = (Date.now() - t0) / 1000, cycle = Math.floor(sec / 4)
-      const reach = cycle % 4 === 3 ? 0.7 : 0.95 // una de cada cuatro queda corta, para mostrar la corrección
+      const sec = (Date.now() - t0) / 1000, n = Math.floor(sec / 4)
+      const reach = n % 4 === 3 ? 0.7 : 0.95
       registerAngle(Math.max(0, routine.goal * reach * (0.5 - 0.5 * Math.cos((2 * Math.PI * sec) / 4)) + Math.sin(sec * 7) * 2), Date.now(), routine.goal)
     }, 250)
     return () => window.clearInterval(timer)
-  }, [demo, usesSensor, routine.goal])
+  }, [demo, usesSensor, setActive, routine.goal])
 
-  const resetSession = () => { setReps([]); setElapsed(0); setPhase(0); repState.current = { up: false, peak: 0, start: 0 } }
+  const select = (id: Exercise) => { if (id === selected) return; setSelected(id); setPhase('idle'); setClock(0); setReps([]); setAngle(null) }
+  const toggleDone = (id: Exercise) => setDay(d => ({ ...d, done: { ...d.done, [id]: !d.done[id] } }))
+  const start = () => {
+    if (setActive) { setPhase('idle'); return } // pausa
+    setReps([]); repState.current = { up: false, peak: 0, start: 0 }; setClock(0); setPhase('set')
+  }
+  const registerSet = () => {
+    const next = setsDone + 1
+    const finished = next >= routine.sets
+    setDay(d => ({ ...d, sets: { ...d.sets, [routine.id]: next }, done: finished ? { ...d.done, [routine.id]: true } : d.done }))
+    setReps([]); repState.current = { up: false, peak: 0, start: 0 }
+    if (finished || !routine.rest) { setPhase('idle'); setClock(0) } else { setPhase('rest'); setClock(routine.rest) }
+  }
+  const changeLoad = (delta: number) => setDay(d => ({ ...d, loads: { ...d.loads, [routine.id]: Math.max(load.min, Math.min(load.max, load.value + delta * load.step)) } }))
+  const resetLoad = () => setDay(d => { const loads = { ...d.loads }; delete loads[routine.id]; return { ...d, loads } })
   const calibrate = () => {
     if (!accel) return
     setNeutral(accel)
     try { localStorage.setItem(`stellar-neutral-${astronautId}`, JSON.stringify(accel)) } catch { /* sin almacenamiento */ }
   }
 
-  const full = reps.filter(r => r.full).length
-  const fast = reps.filter(r => r.seconds < 2).length
-  const score = reps.length ? Math.round((full / reps.length) * 100) : null
+  // Tarjetas superiores
+  const doneMin = list.reduce((sum, r) => sum + (day.done[r.id] ? r.minutes : (Math.min(day.sets[r.id] ?? 0, r.sets) / r.sets) * r.minutes), 0) + (setActive ? clock / 60 : 0)
+  const harnessKg = day.loads.run ?? list.find(r => r.id === 'run')!.load.value
+  const harnessPct = Math.round((harnessKg / 80) * 100) // referencia: masa corporal de 80 kg
+  const hr = sample?.heart_rate_bpm != null ? Math.round(sample.heart_rate_bpm) : null
+  const zone = hr == null ? { label: t('Sin lectura', 'No reading'), cls: 'off' } : hr < 100 ? { label: t('Zona de reposo', 'Resting zone'), cls: 'rest' } : hr <= 160 ? { label: t('Zona aeróbica', 'Aerobic zone'), cls: 'ok' } : { label: t('Zona alta: baja la intensidad', 'High zone: ease off'), cls: 'high' }
   const lastRep = reps[reps.length - 1]
-  const breathing = sample?.respiration_rate_bpm ?? null
-  const progress = usesSensor && angle != null ? Math.min(100, (angle / routine.goal) * 100) : 0
-  const advice = !usesSensor ? ((sample?.heart_rate_bpm ?? 0) > 165 ? t('Pulso muy alto: baja la intensidad un momento.', 'Heart rate very high: ease off for a moment.') : t('Mantén un ritmo constante en zona aeróbica; la app vigila tu pulso.', 'Keep a steady pace in the aerobic zone; the app watches your heart rate.'))
-    : !playing ? t('Pulsa "Iniciar rutina" para empezar a contar repeticiones.', 'Press "Start routine" to begin counting reps.')
-    : !lastRep ? t(`Sube hasta unos ${routine.goal}° y vuelve a la posición inicial.`, `Go up to about ${routine.goal}° and return to the start position.`)
-    : !lastRep.full ? t(`Última repetición: ${lastRep.peak}° de ${routine.goal}°. Intenta subir un poco más.`, `Last rep: ${lastRep.peak}° of ${routine.goal}°. Try to go a little higher.`)
-    : lastRep.seconds < 2 ? t('Buen rango, pero muy rápido: hazlo más lento y controlado.', 'Good range, but too fast: make it slower and controlled.')
-    : t('Repetición completa y controlada. ¡Sigue así!', 'Full, controlled rep. Keep it up!')
 
-  return <section className="coach-page">
-    <div className="coach-heading"><div><span>STELLAR MOTION COACH</span><h2>{t('Entrenamiento guiado', 'Guided training')}</h2><p>{t('Un sensor MPU6050 mide el ángulo de tu pierna o brazo frente a tu postura neutra y cuenta las repeticiones.', 'An MPU6050 sensor measures the angle of your leg or arm against your neutral posture and counts reps.')}</p></div><div className="session-health"><b>{sample?.heart_rate_bpm != null ? Math.round(sample.heart_rate_bpm) : '—'} {t('lpm', 'bpm')}</b><span>{t('FC durante ejercicio', 'HR during exercise')}</span><b>{breathing?.toFixed(1) ?? '—'} {t('rpm', 'br/min')}</b><span>{t('Respiración', 'Breathing')}</span></div></div>
+  const group = (block: Block) => {
+    const items = list.filter(r => r.block === block)
+    return <article className="tp-group">
+      <header>
+        <Icon name={block === 'ared' ? 'entrenamiento' : 'monitorizacion'} size={20} />
+        <div><b>{block === 'ared' ? t('Fuerza en ARED', 'ARED strength') : 'Cardio T2 / CEVIS'}</b><small>{block === 'ared' ? t('Dispositivo resistivo avanzado', 'Advanced resistive device') : t('Cinta con arnés y cicloergómetro', 'Harness treadmill and cycle ergometer')}</small></div>
+        <em>{block === 'ared' ? '90 min' : '60 min'}</em>
+      </header>
+      {items.map(r => {
+        const done = !!day.done[r.id]
+        return <div key={r.id} className={`tp-row ${selected === r.id ? 'active' : ''} ${done ? 'done' : ''}`}>
+          <div className="tp-row-main" onClick={() => select(r.id)}>
+            <button className={`tp-check ${done ? 'on' : ''}`} aria-pressed={done} aria-label={done ? t('Marcar como pendiente', 'Mark as pending') : t('Marcar como hecho', 'Mark as done')} onClick={e => { e.stopPropagation(); toggleDone(r.id) }}>{done && <svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7" /></svg>}</button>
+            <div className="tp-name"><b>{r.name}</b><small>{r.muscles}</small></div>
+            <span className="tp-badge">{r.badge}</span>
+            <div className="tp-load"><small>{t('RESISTENCIA DE VACÍO', 'VACUUM RESISTANCE')}</small><b>{loadText({ ...r.load, value: day.loads[r.id] ?? r.load.value })}</b></div>
+            <button className="tp-tech" aria-expanded={technique === r.id} onClick={e => { e.stopPropagation(); setTechnique(technique === r.id ? null : r.id) }}>{t('Ver técnica', 'View technique')} <Icon name={technique === r.id ? 'chevron-abajo' : 'flecha-derecha'} size={13} /></button>
+          </div>
+          {technique === r.id && <div className="tp-technique"><p><b>{t('Cómo se hace', 'How to do it')}</b>{r.guide}</p><p><b>{t('Para qué sirve', 'Why it matters')}</b>{r.why}</p></div>}
+        </div>
+      })}
+    </article>
+  }
 
-    <div className={`imu-strip ${imuLive && !demo ? 'real' : ''}`}>
-      <b>{demo ? t('MODO DEMOSTRACIÓN · movimiento simulado', 'DEMO MODE · simulated movement') : t('SENSOR REAL · MPU6050 vía ESP32', 'REAL SENSOR · MPU6050 via ESP32')}</b>
-      <span>{imuLive ? (neutral ? t('Postura neutra calibrada.', 'Neutral posture calibrated.') : t('Ponte en la postura inicial y pulsa "Calibrar postura neutra".', 'Get into the start posture and press "Calibrate neutral posture".')) : imuZeros ? t('El ESP32 está conectado pero no envía datos del acelerómetro (llegan en 0): falta activar el MPU6050 en el firmware.', 'The ESP32 is connected but sends no accelerometer data (all 0): the MPU6050 still needs enabling in the firmware.') : t('No llegan datos del acelerómetro; se usa el modo demostración.', 'No accelerometer data is arriving; demo mode is used.')}</span>
+  return <section className="tp-page">
+    <div className="tp-heading">
       <div>
-        {imuLive && <button onClick={calibrate}>{t('Calibrar postura neutra', 'Calibrate neutral posture')}</button>}
-        <label><input type="checkbox" checked={demo} onChange={e => setDemoChoice(e.target.checked)} disabled={!imuLive} /> {t('Demostración', 'Demo')}</label>
+        <span>{t('RENDIMIENTO DIARIO', 'DAILY PERFORMANCE')}</span>
+        <h2>{t('Protocolo de Entrenamiento Diario', 'Daily Training Protocol')} <em><Icon name="reloj" size={14} /> {t('2 h 30 min · Objetivo diario', '2 h 30 min · Daily goal')}</em></h2>
+        <p>{t('Programa adaptado para preservar fuerza, densidad ósea y capacidad cardiovascular.', 'Programme adapted to preserve strength, bone density and cardiovascular capacity.')}</p>
+      </div>
+      <div className="tp-tabs" role="tablist">
+        {([['all', t('Todos', 'All')], ['ared', t('Fuerza ARED', 'ARED strength')], ['cardio', 'Cardio T2 / CEVIS']] as const).map(([id, label]) =>
+          <button key={id} role="tab" aria-selected={filter === id} className={filter === id ? 'on' : ''} onClick={() => setFilter(id)}>{label}</button>)}
       </div>
     </div>
 
-    <div className="coach-layout">
-      <div className="routine-list" aria-label={t('Rutinas disponibles', 'Available routines')}>
-        <span>{t('PROTOCOLO DIARIO · ARED + T2 / CEVIS', 'DAILY PROTOCOL · ARED + T2 / CEVIS')}</span>
-        {list.map((item, index) => <button key={item.id} className={selected === index ? 'selected' : ''} onClick={() => { setSelected(index); resetSession(); setPlaying(false) }}><i>{String(index + 1).padStart(2, '0')}</i><div><b>{item.name}</b><small>{item.muscles} · {item.sets}</small></div></button>)}
-      </div>
+    <div className="tp-stats">
+      <article><i><Icon name="reloj" size={20} /></i><div><small>{t('Tiempo completado', 'Time completed')}</small><b>{hhmm(doneMin)} <span>/ 02:30 hrs</span></b><div className="tp-progress"><i style={{ width: `${Math.min(100, (doneMin / DAILY_MIN) * 100)}%` }} /></div></div></article>
+      <article><i><Icon name="entrenamiento" size={20} /></i><div><small>{t('Carga simulada en arnés', 'Simulated harness load')}</small><b>{harnessPct}% <span>{t('Peso corporal', 'Body weight')}</span></b><small className={harnessPct >= 70 && harnessPct <= 80 ? '' : 'warn'}>{harnessPct >= 70 && harnessPct <= 80 ? t('Objetivo de carga alcanzado', 'Load goal reached') : t('Fuera del objetivo (70–80 %)', 'Outside the goal (70–80 %)')}</small></div></article>
+      <article><i className="heart"><Icon name="corazon" size={20} /></i><div><small>{t('Frecuencia cardiaca actual', 'Current heart rate')}</small><b>{hr ?? '—'} <span>{t('LPM', 'BPM')}</span></b><small className={`tp-zone ${zone.cls}`}><i />{zone.label}</small></div></article>
+    </div>
 
-      <article className="pose-panel">
-        <div className="pose-toolbar"><div><span>{t('EJERCICIO ACTIVO', 'ACTIVE EXERCISE')} · {selected + 1}/{list.length} · {routine.block === 'ared' ? t('FUERZA EN ARED', 'ARED STRENGTH') : t('CARDIO T2 / CEVIS', 'T2 / CEVIS CARDIO')}</span><h3>{routine.name} <small className="pose-sets">{routine.sets}{routine.rest ? ` · ${t('descanso', 'rest')} ${routine.rest} s` : ''} · {routine.load}</small></h3></div><div className="match"><b>{usesSensor && angle != null ? `${Math.round(angle)}°` : '—'}</b><span>{usesSensor ? `${routine.sensor} · ${t(`meta ${routine.goal}°`, `goal ${routine.goal}°`)}` : t('guiado por tiempo y pulso', 'guided by time and heart rate')}</span></div></div>
-        <div className="pose-stage">
-          <div className="deck-grid"/>
-          <div className="tf-wrap" style={{ transform: `rotateY(${view}deg)` }}><span>{t('MOVIMIENTO GUÍA', 'GUIDE MOVEMENT')}</span><TrainingFigure exercise={routine.id} f={playing ? guideF : 0.6} cycle={cycle} ghost /></div>
-          <div className="pose-divider dashed"/>
-          <div className="tf-wrap" style={{ transform: `rotateY(${view}deg)` }}><span>{t('TU MOVIMIENTO', 'YOUR MOVEMENT')}</span><TrainingFigure exercise={routine.id} f={usesSensor ? (angle ?? 0) / routine.goal : guideF} cycle={cycle} /></div>
+    <div className="tp-layout">
+      <div className="tp-lists">{(filter === 'all' || filter === 'ared') && group('ared')}{(filter === 'all' || filter === 'cardio') && group('cardio')}</div>
+
+      <article className="tp-active">
+        <div className="tp-active-head"><span>{t('EJERCICIO ACTIVO', 'ACTIVE EXERCISE')}</span><small>{index + 1} / {list.length}</small></div>
+        <h3>{routine.name}</h3>
+        <p>{routine.cue}</p>
+        <div className="tp-stage">
+          <i className="tp-axis" />
+          <TrainingFigure exercise={routine.id} f={usesSensor && setActive ? (angle ?? 0) / routine.goal : setActive ? guideF : 0.6} cycle={cycle} />
           <div className="active-muscles"><b><i />{t('Músculos activos', 'Active muscles')}</b><small>{routine.muscles}</small></div>
-          <div className="orientation"><span>{t('VISTA', 'VIEW')}</span><input aria-label={t('Rotar vista 3D', 'Rotate 3D view')} type="range" min="-45" max="45" value={view} onChange={e => setView(Number(e.target.value))}/><b>{view}°</b></div>
         </div>
-        {usesSensor && <div className="angle-meter"><i style={{ width: `${progress}%` }} /><em /><span>0°</span><span>{t('meta', 'goal')} {routine.goal}°</span></div>}
-        <div className="coach-cue"><span>{t('PASO', 'STEP')} {phase + 1}</span><p>{routine.cue}</p><div className="session-controls"><button className="primary-action" onClick={() => { if (!playing) resetSession(); setPlaying(p => !p) }}>{playing ? t('Pausar rutina', 'Pause routine') : t('Iniciar rutina', 'Start routine')}</button><button onClick={resetSession}>{t('Reiniciar conteo', 'Reset count')}</button><b>{String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</b></div></div>
-      </article>
+        <div className={`tp-sensor ${imuLive && !demo ? 'real' : ''}`}>
+          <span><i />{!usesSensor ? `${t('Sensor', 'Sensor')}: ${routine.sensor}` : demo ? t('Demostración · movimiento simulado', 'Demo · simulated movement') : `${routine.sensor} · ${neutral ? t('calibrado', 'calibrated') : t('sin calibrar', 'not calibrated')}`}</span>
+          {usesSensor && imuLive && <button onClick={calibrate}>{t('Calibrar postura', 'Calibrate posture')}</button>}
+          {usesSensor && <label><input type="checkbox" checked={demo} disabled={!imuLive} onChange={e => setDemoChoice(e.target.checked)} /> {t('Demo', 'Demo')}</label>}
+        </div>
 
-      <div className="coach-feedback">
-        <span>{t('RETROALIMENTACIÓN', 'FEEDBACK')}</span><h3>{advice}</h3>
-        <div className="alignment-ring" style={{'--score': `${(score ?? 0) * 3.6}deg`} as React.CSSProperties}><b>{reps.length}</b><small>{t('repeticiones', 'reps')}</small></div>
-        <ul>
-          <li><i className={score == null || score >= 80 ? 'ok' : 'watch'}/>{t('Rango completo', 'Full range')}: {usesSensor ? `${full} ${t('de', 'of')} ${reps.length}` : '—'}</li>
-          <li><i className={fast === 0 ? 'ok' : 'watch'}/>{fast === 0 ? t('Ritmo controlado', 'Controlled pace') : t(`${fast} repetición(es) muy rápidas`, `${fast} rep(s) too fast`)}</li>
-          <li><i className={(breathing ?? 0) > 20 ? 'watch' : 'ok'}/>{(breathing ?? 0) > 20 ? t('Respiración alta: reduce la intensidad', 'High breathing: lower the intensity') : t('Respiración uniforme', 'Steady breathing')}</li>
-        </ul>
-        <div className="safety-note"><b>{t('Por qué en el espacio', 'Why in space')}</b><p>{routine.why}</p></div>
-        <div className="safety-note"><b>{t('Seguridad', 'Safety')}</b><p>{t('Detén la rutina si aparece dolor, mareo o dificultad respiratoria. En microgravedad el ángulo se calcularía con el giroscopio; en la Tierra usamos la gravedad como referencia.', 'Stop the routine if you feel pain, dizziness or shortness of breath. In microgravity the angle would be computed with the gyroscope; on Earth we use gravity as the reference.')}</p></div>
-      </div>
+        <div className={`tp-interval ${phase}`}>
+          <div>
+            <small>{t('INTERVALO ACTUAL', 'CURRENT INTERVAL')} · {routine.sets > 1 ? t(`SERIE ${Math.min(setsDone + 1, routine.sets)} DE ${routine.sets}`, `SET ${Math.min(setsDone + 1, routine.sets)} OF ${routine.sets}`) : t('BLOQUE ÚNICO', 'SINGLE BLOCK')}</small>
+            <b>{phase === 'set' && routine.reps ? `${reps.length}/${routine.reps}` : mmss(phase === 'idle' ? routine.rest || routine.minutes * 60 : clock)}</b>
+            <span>{day.done[routine.id] ? t('Ejercicio completado', 'Exercise completed')
+              : phase === 'rest' ? t('Descanso entre series', 'Rest between sets')
+              : phase === 'set' ? (routine.reps ? `${t('repeticiones', 'reps')} · ${mmss(clock)}${angle != null ? ` · ${Math.round(angle)}° / ${routine.goal}°` : ''}${lastRep ? (lastRep.full ? t(' · rango completo', ' · full range') : t(' · sube un poco más', ' · go a bit higher')) : ''}` : t('Bloque en curso', 'Block in progress'))
+              : routine.rest ? t('Descanso entre series', 'Rest between sets') : t('Duración del bloque', 'Block duration')}</span>
+          </div>
+          <button onClick={start}><svg viewBox="0 0 16 16">{setActive ? <path d="M5 3v10M11 3v10" /> : <path d="M5 3l8 5-8 5z" />}</svg>{setActive ? t('Pausar', 'Pause') : t('Iniciar', 'Start')}</button>
+        </div>
+
+        <div className="tp-loadctl">
+          <div><small>{routine.id === 'cevis' ? t('NIVEL DE RESISTENCIA', 'RESISTANCE LEVEL') : routine.id === 'run' ? t('CARGA DEL ARNÉS', 'HARNESS LOAD') : t('CARGA RESISTIVA', 'RESISTIVE LOAD')}</small><b>{loadText(load)}</b></div>
+          <button aria-label={t('Bajar carga', 'Lower load')} onClick={() => changeLoad(-1)}>−</button>
+          <button aria-label={t('Subir carga', 'Raise load')} onClick={() => changeLoad(1)}>+</button>
+        </div>
+        <button className="tp-primary" onClick={registerSet} disabled={!!day.done[routine.id]}><svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7" /></svg>{day.done[routine.id] ? t('Ejercicio completado', 'Exercise completed') : routine.sets > 1 ? t(`Serie registrada (${setsDone}/${routine.sets})`, `Set logged (${setsDone}/${routine.sets})`) : t('Bloque registrado', 'Block logged')}</button>
+        <button className="tp-secondary" onClick={resetLoad} title={t('Vuelve a la carga prescrita', 'Back to the prescribed load')}><svg viewBox="0 0 16 16"><path d="M2 4h8M12 4h2M2 12h3M7 12h7M10 2v4M5 10v4" /></svg>{t('Ajustar carga (prescrita: ', 'Adjust load (prescribed: ')}{loadText(routine.load)})</button>
+        <p className="tp-safety">{t('Detén el ejercicio si aparece dolor, mareo o dificultad para respirar.', 'Stop exercising if you feel pain, dizziness or shortness of breath.')}</p>
+      </article>
     </div>
   </section>
 }
