@@ -3,7 +3,7 @@ import type { CrewProfile } from './profiles'
 export default function ProfilePicker({ profiles, onSelect }: { profiles: CrewProfile[]; onSelect: (profile: CrewProfile) => void }) {
   return <main className="profile-gate">
     <div className="gate-stars"/><div className="gate-orbit orbit-a"/><div className="gate-orbit orbit-b"/>
-    <header className="gate-brand"><div className="mark">S</div><div><b>STELLAR</b><span>ARTEMIS III · CREW HEALTH</span></div></header>
+    <header className="gate-brand"><img className="gate-logo" src="/brand/logo-cian.svg" alt="" /><div><b>STELLAR <em>Health</em></b><span>MISIÓN STELLAR-01 · SALUD DE LA TRIPULACIÓN</span></div></header>
     <section className="profile-picker">
       <span>ONBOARD PROFILE ACCESS</span><h1>¿Quién está ingresando?</h1><p>Selecciona un perfil local. No se requieren cuentas ni contraseñas en este prototipo.</p>
       <div className="profile-cards">

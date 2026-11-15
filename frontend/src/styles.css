@@ -181,3 +181,52 @@ nav button .nav-badge.crit{background:var(--crit);color:#fff}
 @media(max-width:1100px){.mc-crew,.mc-grid{grid-template-columns:1fr 1fr}.alert-card{grid-template-columns:1fr}.alert-card .todo{border-left:0;padding-left:0}.level-legend{grid-template-columns:1fr}}
 @media(max-width:760px){.topbar{flex-wrap:wrap;height:auto;padding:12px 0}.topbar .divider{display:none}}
 nav button span.nav-badge{width:auto;font-size:11px;color:#08121F}nav button.active span.nav-badge{color:#08121F}nav button span.nav-badge.crit,nav button.active span.nav-badge.crit{color:#fff}
+/* ---- Posición EVA (3D) ---- */
+.eva-page{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:14px;padding-bottom:30px}
+.eva-stage{position:relative;height:min(68vh,640px);min-height:420px;border:1px solid var(--border);border-radius:14px;overflow:hidden;background:radial-gradient(circle at 30% 20%,#13263b 0,#08121F 60%)}
+.eva-canvas{position:absolute;inset:0}
+.eva-canvas canvas{display:block;width:100%;height:100%;cursor:grab}
+.eva-label{position:absolute;left:0;top:0;pointer-events:none;background:rgba(8,18,31,.85);border:1px solid var(--accent-main);border-radius:10px;padding:5px 10px;text-align:center;white-space:nowrap;transition:opacity .2s}
+.eva-label b{display:block;font:700 16px "Space Grotesk"}.eva-label small{font-size:10px;color:var(--text-2)}
+.eva-hud{position:absolute;top:14px;left:14px;display:flex;gap:8px;flex-wrap:wrap}
+.eva-source{font:600 11px "Inter";letter-spacing:.06em;padding:6px 10px;border-radius:20px;background:rgba(121,169,216,.15);color:var(--blue-2);border:1px solid rgba(121,169,216,.4)}
+.eva-source.real{background:rgba(53,201,154,.15);color:var(--ok);border-color:rgba(53,201,154,.4)}
+.eva-source.off{background:rgba(241,111,120,.15);color:var(--crit);border-color:rgba(241,111,120,.4)}
+.eva-controls{position:absolute;top:14px;right:14px;display:flex;gap:10px;align-items:center}
+.eva-controls button{border:1px solid var(--border);background:rgba(17,31,46,.9);color:var(--text);border-radius:20px;padding:7px 12px;font:600 12px "Inter";cursor:pointer}
+.eva-controls label{font-size:12px;color:var(--text-2);background:rgba(17,31,46,.9);border:1px solid var(--border);border-radius:20px;padding:7px 12px;display:flex;gap:6px;align-items:center}
+.eva-hint{position:absolute;bottom:10px;left:14px;margin:0;font-size:11px;color:var(--text-2)}
+.eva-side{display:grid;gap:12px;align-content:start}
+.eva-side article{border:1px solid var(--border);background:var(--surface);border-radius:14px;padding:16px}
+.eva-side span{display:flex;align-items:center;gap:6px;font:600 10px "Inter";letter-spacing:.1em;color:var(--text-2)}
+.eva-distance b{display:block;font:700 44px "Space Grotesk";margin:8px 0 2px}.eva-distance b small{font-size:18px;color:var(--text-2)}
+.eva-distance p{font-size:12px;color:var(--text-2);margin:0 0 12px;line-height:1.5}
+.eva-distance p i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.eva-bar{position:relative;height:8px;border-radius:4px;background:var(--surface-2);overflow:visible}
+.eva-bar i{position:absolute;inset:0 auto 0 0;border-radius:4px;transition:width .6s}
+.eva-bar em{position:absolute;top:-3px;width:2px;height:14px;background:var(--text-2)}
+.eva-scale{display:flex;justify-content:space-between;font-size:10px;color:var(--text-2);margin-top:6px}
+.eva-coords{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.eva-coords div{background:var(--surface-2);border-radius:10px;padding:10px}
+.eva-coords b{display:block;font:600 18px "Space Grotesk";margin-top:2px}.eva-coords small{font-size:10px;color:var(--text-2)}
+.eva-note p{font-size:12px;color:var(--text-2);line-height:1.55;margin:8px 0 0}
+.eva-mini-body{display:flex;gap:16px;align-items:center;margin:18px 0}
+.eva-mini-body .icon{color:var(--accent-main)}
+.eva-mini-body p{margin:0 0 6px;font-size:12px;color:var(--text-2)}.eva-mini-body b{color:var(--text)}
+@media(max-width:1100px){.eva-page{grid-template-columns:1fr}.eva-coords{grid-template-columns:repeat(5,1fr)}}
+@media(max-width:620px){.eva-coords{grid-template-columns:repeat(3,1fr)}.eva-controls{top:auto;bottom:34px;right:10px}}
+/* ---- Coach con MPU6050 ---- */
+.imu-strip{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;border:1px solid rgba(121,169,216,.4);background:rgba(121,169,216,.08);border-radius:12px;padding:10px 16px;margin-bottom:12px;font-size:12px;color:var(--text-2)}
+.imu-strip.real{border-color:rgba(53,201,154,.45);background:rgba(53,201,154,.08)}
+.imu-strip>b{font:700 11px "Inter";letter-spacing:.06em;color:var(--blue-2)}
+.imu-strip.real>b{color:var(--ok)}
+.imu-strip>div{margin-left:auto;display:flex;gap:10px;align-items:center}
+.imu-strip button{border:1px solid rgba(69,214,197,.5);background:rgba(69,214,197,.1);color:var(--accent-main);border-radius:20px;padding:6px 12px;font:600 12px "Inter";cursor:pointer}
+.imu-strip label{display:flex;gap:6px;align-items:center}
+.angle-meter{position:relative;height:10px;border-radius:5px;background:var(--surface-2);margin:14px 20px 22px}
+.angle-meter i{position:absolute;inset:0 auto 0 0;border-radius:5px;background:linear-gradient(90deg,var(--blue-2),var(--accent-main));transition:width .25s}
+.angle-meter em{position:absolute;left:85%;top:-4px;width:2px;height:18px;background:var(--ok)}
+.angle-meter span{position:absolute;top:14px;font-size:10px;color:var(--text-2)}
+.angle-meter span:first-of-type{left:0}.angle-meter span:last-of-type{right:0}
+.alignment-ring small{font-size:10px}
+.gate-logo{width:58px;height:auto}.gate-brand b{font-family:"Space Grotesk","Inter",sans-serif}.gate-brand b em{font-style:normal;color:var(--accent-main)}

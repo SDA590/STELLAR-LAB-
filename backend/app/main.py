@@ -55,6 +55,7 @@ class TelemetryIn(BaseModel):
     gz: float = 0
     pos_x_m: float = 0
     pos_y_m: float = 0
+    pos_z_m: float | None = None
     area_m2: float = Field(default=0, ge=0)
     steps: int = Field(default=0, ge=0)
     battery_pct: int = Field(default=100, ge=0, le=100)
@@ -178,8 +179,7 @@ def simulated_sample(astronaut_id: str, ts: float) -> dict:
     beat = sin(2 * pi * (config["heart"] / 60) * t + phase)
     qrs = max(0.0, beat) ** 18
     respiratory_wave = sin(2 * pi * (config["respiration"] / 60) * t + phase)
-    x = 1.25 * sin(t / 5.5 + phase)
-    y = 0.85 * sin(t / 7.0 + 0.8 + phase)
+    x, y, z = analysis.eva_position(phase, ts)
     return {
         "astronaut_id": astronaut_id,
         "device_id": f"sim-{astronaut_id}",
@@ -198,6 +198,7 @@ def simulated_sample(astronaut_id: str, ts: float) -> dict:
         "gz": round(3 * sin(t + phase), 2),
         "pos_x_m": round(x, 2),
         "pos_y_m": round(y, 2),
+        "pos_z_m": round(z, 2),
         "area_m2": round(4 * 1.25 * 0.85, 2),
         "steps": int(t / 9) + int(config["movement"]),
         "battery_pct": 86,
@@ -424,3 +425,12 @@ def telemetry(packet: TelemetryIn) -> dict:
     payload.update(source="hardware", received_at=datetime.fromtimestamp(now, timezone.utc).isoformat(), _ts=now)
     local_packets[astronaut_id].append(payload)
     return {"accepted": True, "astronaut_id": astronaut_id, "samples": len(local_packets[astronaut_id])}
+
+
+@app.get("/api/position")
+def get_position(astronaut_id: AstronautId = "bresnik", limit: int = 120, demo: bool = False) -> dict:
+    """Posición XYZ (m) respecto a la estación, distancia y estela para la vista 3D."""
+    limit = max(10, min(limit, MAX_HISTORY))
+    samples = timeline(astronaut_id, limit)
+    track = analysis.position_track(samples, ASTRONAUTS[astronaut_id]["phase"], demo)
+    return {"astronaut_id": astronaut_id, "demo": demo, **track}
