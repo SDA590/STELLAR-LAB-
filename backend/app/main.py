@@ -582,8 +582,27 @@ def get_position(astronaut_id: AstronautId = "bresnik", limit: int = 120, demo: 
     if demo:
         prefer = "sim"
     window = limit + LIVE_WINDOW_S + 2
-    mpu_rows = live_per_second(real_rows(astronaut_id, window, "node"), limit)
-    phone_rows = live_per_second(real_rows(astronaut_id, window, "phone"), limit)
+    return position_for(astronaut_id, limit, prefer, real_rows(astronaut_id, window, "all"))
+
+
+@app.get("/api/crew-positions")
+def get_crew_positions(prefer: Literal["mpu", "phone", "sim"] = "mpu", limit: int = 30) -> dict:
+    """Posición de los 4 tripulantes a la vez (una sola consulta a Supabase) para la vista 3D."""
+    limit = max(10, min(limit, MAX_HISTORY))
+    rows = real_rows(None, limit + LIVE_WINDOW_S + 2, "all")
+    items = []
+    for astronaut_id in ASTRONAUTS:
+        mine = [r for r in rows if r.get("astronaut_id") == astronaut_id]
+        pos = position_for(astronaut_id, limit, prefer, mine)
+        pos["trail"] = pos["trail"][-limit:]
+        items.append(pos)
+    return {"prefer": prefer, "items": items}
+
+
+def position_for(astronaut_id: str, limit: int, prefer: str, rows: list[dict]) -> dict:
+    """Elige, segundo a segundo, la fuente de posición (MPU / celular / simulación) de un astronauta."""
+    mpu_rows = live_per_second([r for r in rows if not is_phone(r)], limit)
+    phone_rows = live_per_second([r for r in rows if is_phone(r)], limit)
     samples = []
     for mpu, phone in zip(mpu_rows, phone_rows):
         chosen = {"source": "simulation"}

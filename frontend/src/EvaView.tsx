@@ -6,6 +6,11 @@ import { apiFetch } from './api'
 import { t } from './i18n'
 import { usePositionPrefer } from './phoneTracker'
 import { fallbackText, PhoneControls, positionUrl, sourceLabel, SourceSwitch, type Position } from './PositionSource'
+import { profiles } from './profiles'
+
+type CrewPosition = Position & { astronaut_id: string }
+const crewInfo = (id: string) => profiles.find(p => p.id === id)
+const srcTag = (s?: Position['source']) => s === 'hardware' ? 'MPU' : s === 'phone' ? t('CEL', 'PHONE') : 'SIM'
 
 const ZONE = {
   cabina: { color: '#45D6C5' },
@@ -23,13 +28,13 @@ const zoneText = (z: keyof typeof ZONE) => ({
 // Datos: X, Y en el plano y Z hacia arriba (metros desde el punto 0). En three.js "arriba" es Y.
 const toScene = ([x, y, z]: [number, number, number]) => new THREE.Vector3(x, z, -y)
 
-function textSprite(text: string, color = '#91A2B4', size = 64) {
-  const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 128
+function textSprite(text: string, color = '#91A2B4', size = 64, width = 256) {
+  const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = 128
   const ctx = canvas.getContext('2d')!
   ctx.font = `600 ${size}px Inter, sans-serif`; ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-  ctx.fillText(text, 128, 64)
+  ctx.fillText(text, width / 2, 64)
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthWrite: false }))
-  sprite.scale.set(4, 2, 1)
+  sprite.scale.set(4 * width / 256, 2, 1)
   return sprite
 }
 
@@ -81,19 +86,19 @@ function buildCapsule() {
   return g
 }
 
-function buildAstronaut() {
+function buildAstronaut(accent = '#45D6C5') {
   const g = new THREE.Group()
   const suit = new THREE.MeshStandardMaterial({ color: '#f1f5f9', roughness: 0.7 })
   const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 0.7, 6, 16), suit); g.add(torso)
   const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.36, 24, 16), suit); helmet.position.y = 0.85; g.add(helmet)
-  const visor = new THREE.Mesh(new THREE.SphereGeometry(0.3, 24, 16, 0, Math.PI), new THREE.MeshStandardMaterial({ color: '#45D6C5', emissive: '#1b7f74', metalness: 0.9, roughness: 0.1 }))
+  const visor = new THREE.Mesh(new THREE.SphereGeometry(0.3, 24, 16, 0, Math.PI), new THREE.MeshStandardMaterial({ color: accent, emissive: new THREE.Color(accent).multiplyScalar(0.45), metalness: 0.9, roughness: 0.1 }))
   visor.position.set(0, 0.85, 0.1); g.add(visor)
   const pack = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.9, 0.35), suit); pack.position.set(0, 0.15, -0.42); g.add(pack)
   for (const s of [-1, 1]) {
     const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.55, 4, 8), suit); arm.position.set(s * 0.58, 0.15, 0); arm.rotation.z = s * 0.5; g.add(arm)
     const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.6, 4, 8), suit); leg.position.set(s * 0.22, -0.85, 0); leg.rotation.z = s * 0.15; g.add(leg)
   }
-  const halo = new THREE.Mesh(new THREE.SphereGeometry(1.4, 16, 12), new THREE.MeshBasicMaterial({ color: '#45D6C5', transparent: true, opacity: 0.08, depthWrite: false })); g.add(halo)
+  const halo = new THREE.Mesh(new THREE.SphereGeometry(1.4, 16, 12), new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.08, depthWrite: false })); g.add(halo)
   g.scale.setScalar(0.85) // ~1,8 m, cabe dentro de la cápsula
   return g
 }
@@ -101,8 +106,10 @@ function buildAstronaut() {
 export default function EvaView({ astronautId, name }: { astronautId: string; name: string }) {
   const mountRef = useRef<HTMLDivElement>(null)
   const labelRef = useRef<HTMLDivElement>(null)
-  const sceneRef = useRef<{ setData: (p: Position) => void; reset: () => void } | null>(null)
+  const sceneRef = useRef<{ setData: (p: Position) => void; setCrew: (items: CrewPosition[]) => void; reset: () => void } | null>(null)
   const [pos, setPos] = useState<Position | null>(null)
+  const [crew, setCrew] = useState<CrewPosition[]>([])
+  const [showCrew, setShowCrew] = useState(true)
   const [prefer, setPrefer] = usePositionPrefer()
   const [error, setError] = useState(false)
 
@@ -144,7 +151,40 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
     const zero = textSprite("Punto 0", "#45D6C5", 44); zero.position.set(0, 3.2, 0); scene.add(zero)
 
     scene.add(buildCapsule()) // a escala real: cápsula de ~4 m de base; cabina = 2 m alrededor del punto 0
-    const astronaut = buildAstronaut(); scene.add(astronaut)
+    const astronaut = buildAstronaut(crewInfo(astronautId)?.accent); scene.add(astronaut)
+
+    // Resto de la tripulación: un astronauta por perfil, con su color y su nombre encima.
+    type Mate = { body: THREE.Group; label: THREE.Sprite; trail: THREE.Line; target: THREE.Vector3; seen: boolean; text: string }
+    const mates = new Map<string, Mate>()
+    const mateFor = (id: string) => {
+      let m = mates.get(id)
+      if (!m) {
+        const accent = crewInfo(id)?.accent ?? '#c8d6e5'
+        const body = buildAstronaut(accent); body.scale.setScalar(0.75); scene.add(body)
+        const trailLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: accent, transparent: true, opacity: 0.45 })); scene.add(trailLine)
+        m = { body, label: new THREE.Sprite(), trail: trailLine, target: new THREE.Vector3(), seen: false, text: '' }
+        scene.add(m.label); mates.set(id, m)
+      }
+      return m
+    }
+    const setCrew = (items: CrewPosition[]) => {
+      const present = new Set<string>()
+      for (const it of items) {
+        if (it.astronaut_id === astronautId) continue
+        present.add(it.astronaut_id)
+        const m = mateFor(it.astronaut_id)
+        m.target = toScene([it.x, it.y, it.z])
+        if (!m.seen) { m.body.position.copy(m.target); m.seen = true }
+        const text = `${crewInfo(it.astronaut_id)?.shortName ?? it.astronaut_id} · ${srcTag(it.source)}`
+        if (text !== m.text) {
+          scene.remove(m.label); (m.label.material as THREE.SpriteMaterial).map?.dispose()
+          m.label = textSprite(text, crewInfo(it.astronaut_id)?.accent ?? '#c8d6e5', 60, 512); m.label.scale.set(9, 2.25, 1)
+          scene.add(m.label); m.text = text
+        }
+        m.trail.geometry.dispose(); m.trail.geometry = new THREE.BufferGeometry().setFromPoints(it.trail.map(toScene))
+      }
+      for (const [id, m] of mates) { const on = present.has(id); m.body.visible = on; m.label.visible = on; m.trail.visible = on }
+    }
 
     const tetherMat = new THREE.LineDashedMaterial({ color: '#45D6C5', dashSize: 0.6, gapSize: 0.4 })
     const tether = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), tetherMat); scene.add(tether)
@@ -174,6 +214,10 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
       const t = clock.getElapsedTime()
       astronaut.position.lerp(target, 0.06) // movimiento suave entre lecturas (1 por segundo)
       astronaut.rotation.y = t * 0.3; astronaut.rotation.z = Math.sin(t * 0.7) * 0.15
+      for (const m of mates.values()) {
+        m.body.position.lerp(m.target, 0.06); m.body.rotation.y = t * 0.3
+        m.label.position.copy(m.body.position).add(new THREE.Vector3(0, 2.2, 0))
+      }
       tether.geometry.setFromPoints([new THREE.Vector3(), astronaut.position.clone()]); tether.computeLineDistances()
       stars.rotation.y = t * 0.002
       controls.update(); renderer.render(scene, camera)
@@ -186,7 +230,7 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
       }
     }
     loop()
-    sceneRef.current = { setData, reset }
+    sceneRef.current = { setData, setCrew, reset }
     return () => {
       cancelAnimationFrame(frame); observer.disconnect(); controls.dispose(); renderer.dispose()
       scene.traverse(o => { const m = o as THREE.Mesh; m.geometry?.dispose?.() })
@@ -209,6 +253,22 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
     return () => { alive = false; window.clearInterval(timer) }
   }, [astronautId, prefer])
 
+  // Resto de la tripulación (todas en una consulta), cada segundo
+  useEffect(() => {
+    if (!showCrew) { setCrew([]); sceneRef.current?.setCrew([]); return }
+    let alive = true
+    const load = async () => {
+      try {
+        const res = await apiFetch(`/api/crew-positions?prefer=${prefer}&limit=30`)
+        if (!res.ok) return
+        const items: CrewPosition[] = (await res.json()).items
+        if (alive) { setCrew(items); sceneRef.current?.setCrew(items) }
+      } catch { /* sin cambios */ }
+    }
+    load(); const timer = window.setInterval(load, 1000)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [prefer, showCrew, astronautId])
+
   const zone = { ...(pos ? ZONE[pos.zone] : ZONE.cerca), ...zoneText(pos?.zone ?? 'cerca') }
   return <section className="eva-page">
     <div className="eva-stage">
@@ -221,6 +281,7 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
       </div>
       <div className="eva-controls">
         <button onClick={() => sceneRef.current?.reset()}>{t('Centrar vista', 'Reset view')}</button>
+        <label><input type="checkbox" checked={showCrew} onChange={e => setShowCrew(e.target.checked)} /> {t('Tripulación', 'Crew')}</label>
         <SourceSwitch prefer={prefer} onChange={setPrefer} pos={pos} />
       </div>
       <p className="eva-hint">{t('Arrastra para girar · rueda para acercar', 'Drag to rotate · scroll to zoom')}</p>
@@ -241,6 +302,18 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
         <div><span>{t('Velocidad', 'Speed')}</span><b>{pos?.speed_m_s?.toFixed(2) ?? '—'}</b><small>m/s</small></div>
         <div><span>{t('Máx. (2 min)', 'Max (2 min)')}</span><b>{pos?.max_distance_m.toFixed(1) ?? '—'}</b><small>m</small></div>
       </article>
+      {showCrew && crew.length > 0 && <article className="eva-crew">
+        <span>{t('TRIPULACIÓN EN LA ESCENA', 'CREW IN THE SCENE')}</span>
+        {crew.map(c => {
+          const info = crewInfo(c.astronaut_id)
+          return <div key={c.astronaut_id} className={c.astronaut_id === astronautId ? 'me' : ''}>
+            <i style={{ background: info?.accent }} />
+            <b>{info?.shortName ?? c.astronaut_id}</b>
+            <em style={{ color: ZONE[c.zone].color }}>{c.distance_m.toFixed(1)} m · {zoneText(c.zone).label}</em>
+            <small className={c.source !== 'simulation' ? 'real' : ''}>{srcTag(c.source)}</small>
+          </div>
+        })}
+      </article>}
       <article className="eva-phone">
         <span>{t('FUENTE DE POSICIÓN', 'POSITION SOURCE')}</span>
         <p>{t('Elige el sensor preferido. Si no tiene datos (o el MPU6050 se desboca a más de 40 m), se usa el otro; si ninguno envía, la simulación.', 'Pick the preferred sensor. If it has no data (or the MPU6050 drifts beyond 40 m), the other one is used; if neither sends, the simulation.')}</p>
