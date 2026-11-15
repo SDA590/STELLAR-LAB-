@@ -704,30 +704,32 @@ def post_demo(body: DemoIn, request: Request, response: Response) -> dict:
 # si no llega ninguna, se usa la radiación simulada.
 RADIATION_LIVE_S = 120
 RADIATION_HISTORY_S = 300
-# Umbrales de DEMO en µSv/h (ajustables). Referencia aproximada: en la ISS se miden del orden
-# de 15–40 µSv/h; una tormenta solar puede multiplicarlo muchas veces.
+# Máximo permitido que definió el equipo (Ricardo): 0,017 mSv/h = 17 µSv/h; lo ideal es 0.
+# Niveles relativos a ese máximo (simples y explicables):
+#   < 50 % del máximo = nominal · 50–100 % = elevada · > máximo = alta · > 5× máximo = tormenta.
+RADIATION_MAX_USVH = 17.0
 RADIATION_LEVELS = (
-    (50.0, "nominal", 0, "Dentro de lo esperado para la misión. Sin acción."),
-    (250.0, "elevada", 1, "Observar: limitar el tiempo de EVA y revisar los dosímetros."),
-    (1000.0, "alta", 2, "Alerta: terminar la EVA y volver a la cápsula."),
-    (float("inf"), "tormenta", 3, "Alerta máxima: toda la tripulación al refugio blindado de la nave."),
+    (RADIATION_MAX_USVH * 0.5, "nominal", 0, "Muy por debajo del máximo (17 µSv/h). Sin acción."),
+    (RADIATION_MAX_USVH, "elevada", 1, "Cerca del máximo: limitar el tiempo de EVA y vigilar la tendencia."),
+    (RADIATION_MAX_USVH * 5, "alta", 2, "Sobre el máximo permitido: terminar la EVA y volver a la cápsula."),
+    (float("inf"), "tormenta", 3, "Más de 5 veces el máximo: toda la tripulación al refugio blindado de la nave."),
 )
-STORM_DOSE_RATE_USVH = 1800.0
+STORM_DOSE_RATE_USVH = 150.0
 
 
 def radiation_level(rate: float) -> tuple[str, int, str]:
     for limit, name, level, action in RADIATION_LEVELS:
-        if rate < limit:
+        if rate <= limit:
             return name, level, action
     return RADIATION_LEVELS[-1][1:]
 
 
 def simulated_radiation(ts: float) -> float:
-    """Radiación simulada de fondo (~24 µSv/h); el escenario `solar_storm` la sube en 30 s."""
+    """Radiación simulada de fondo (~3 µSv/h, lejos del máximo); el escenario `solar_storm` la sube en 30 s."""
     t = ts % 86400
-    base = 24 + 4 * sin(t / 40) + _noise(t, 11, 1.5)
+    base = max(0.0, 3 + 0.8 * sin(t / 40) + _noise(t, 11, 0.3))
     k = max((ctx.scenario(a, ts)[2] for a in ASTRONAUTS if ctx.scenario(a, ts)[0] == "solar_storm"), default=0.0)
-    return round(base + k * (STORM_DOSE_RATE_USVH - base), 1)
+    return round(base + k * (STORM_DOSE_RATE_USVH - base), 2)
 
 
 @app.get("/api/radiation")
@@ -749,5 +751,6 @@ def get_radiation() -> dict:
     return {
         "dose_rate_usvh": rate, "level": level, "level_name": name, "action": action,
         "source": source, "device_id": device, "age_s": age, "live_window_s": RADIATION_LIVE_S,
-        "thresholds_usvh": [limit for limit, *_ in RADIATION_LEVELS[:-1]], "history": history,
+        "thresholds_usvh": [limit for limit, *_ in RADIATION_LEVELS[:-1]], "max_usvh": RADIATION_MAX_USVH,
+        "history": history,
     }

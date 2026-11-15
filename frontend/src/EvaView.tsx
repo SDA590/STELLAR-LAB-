@@ -11,23 +11,24 @@ import { profiles } from './profiles'
 type CrewPosition = Position & { astronaut_id: string }
 type Radiation = {
   dose_rate_usvh: number; level: 0 | 1 | 2 | 3; level_name: string; action: string; source: 'sensor' | 'simulation'
-  device_id: string | null; age_s: number; live_window_s: number; thresholds_usvh: number[]; history: [number, number][]
+  device_id: string | null; age_s: number; live_window_s: number; thresholds_usvh: number[]; max_usvh?: number; history: [number, number][]
 }
 const RAD_COLOR = ['#35C99A', '#F2B84B', '#FF8A4C', '#FF5A5F']
 const radLevelText = (l: number) => [t('Nominal', 'Nominal'), t('Elevada', 'Elevated'), t('Alta', 'High'), t('Tormenta solar', 'Solar storm')][l]
 const radActionText = (l: number) => [
-  t('Dentro de lo esperado para la misión. Sin acción.', 'Within mission expectations. No action.'),
-  t('Observar: limitar el tiempo de EVA y revisar los dosímetros.', 'Watch: limit EVA time and check the dosimeters.'),
-  t('Alerta: terminar la EVA y volver a la cápsula.', 'Alert: end the EVA and return to the capsule.'),
-  t('Alerta máxima: toda la tripulación al refugio blindado de la nave.', 'Maximum alert: whole crew to the shielded shelter.'),
+  t('Muy por debajo del máximo (17 µSv/h). Sin acción.', 'Well below the maximum (17 µSv/h). No action.'),
+  t('Cerca del máximo: limitar el tiempo de EVA y vigilar la tendencia.', 'Close to the maximum: limit EVA time and watch the trend.'),
+  t('Sobre el máximo permitido: terminar la EVA y volver a la cápsula.', 'Above the allowed maximum: end the EVA and return to the capsule.'),
+  t('Más de 5 veces el máximo: toda la tripulación al refugio blindado de la nave.', 'Over 5× the maximum: whole crew to the shielded shelter.'),
 ][l]
-/** 0..1 para la lluvia: escala logarítmica (10 µSv/h -> 0, 2000 µSv/h -> 1). */
-const radIntensity = (rate: number) => Math.min(1, Math.max(0, Math.log10(Math.max(rate, 1) / 10) / Math.log10(200)))
+/** 0..1 para la lluvia: escala logarítmica (0,5 µSv/h -> 0, 17 µSv/h (máximo) -> 0,6, 200 µSv/h -> 1). */
+const radIntensity = (rate: number) => Math.min(1, Math.max(0, Math.log10(Math.max(rate, 0.5) / 0.5) / Math.log10(400)))
+const fmtRad = (v: number) => v.toFixed(v < 10 ? 2 : v < 100 ? 1 : 0)
 
 function RadSpark({ h, th }: { h: [number, number][]; th: number[] }) {
   if (h.length < 2) return null
   const W = 260, H = 54, span = 300
-  const max = Math.max(60, ...h.map(p => p[1])) * 1.15
+  const max = Math.max(20, ...h.map(p => p[1])) * 1.15
   const y = (v: number) => (H - (v / max) * H).toFixed(1)
   const pts = h.map(([sec, v]) => `${(((sec + span) / span) * W).toFixed(1)},${y(v)}`).join(' ')
   return <svg className="eva-rad-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
@@ -349,7 +350,7 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
       <div className="eva-hud">
         <span className={`eva-source ${pos && pos.source !== 'simulation' ? 'real' : ''}`}>{t('POSICIÓN', 'POSITION')} · {sourceLabel(pos?.source)}</span>
         {fallbackText(pos) && <span className="eva-source warn">{fallbackText(pos)}</span>}
-        {rad && <span className="eva-source rad" style={{ color: radColor, borderColor: radColor }}>{t('RADIACIÓN', 'RADIATION')} · {rad.dose_rate_usvh.toFixed(rad.dose_rate_usvh < 100 ? 1 : 0)} µSv/h · {rad.source === 'sensor' ? t('SENSOR', 'SENSOR') : 'SIM'}</span>}
+        {rad && <span className="eva-source rad" style={{ color: radColor, borderColor: radColor }}>{t('RADIACIÓN', 'RADIATION')} · {fmtRad(rad.dose_rate_usvh)} µSv/h · {rad.source === 'sensor' ? t('SENSOR', 'SENSOR') : 'SIM'}</span>}
         {error && <span className="eva-source off">{t('Sin conexión con la API', 'No connection to the API')}</span>}
       </div>
       <div className="eva-controls">
@@ -372,7 +373,7 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
       <article className="eva-rad" style={{ borderColor: radColor }}>
         <span>{t('RADIACIÓN EN LA NAVE', 'RADIATION ON THE SHIP')}</span>
         <div className="eva-rad-top">
-          <b style={{ color: radColor }}>{rad ? rad.dose_rate_usvh.toFixed(rad.dose_rate_usvh < 100 ? 1 : 0) : '—'}<small> µSv/h</small></b>
+          <b style={{ color: radColor }}>{rad ? fmtRad(rad.dose_rate_usvh) : '—'}<small> µSv/h</small></b>
           {rad && <em style={{ color: radColor, borderColor: radColor }}>{radLevelText(rad.level)}</em>}
         </div>
         {rad && <p>{radActionText(rad.level)}</p>}
@@ -380,7 +381,7 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
         <small className="eva-rad-src">{!rad ? '…' : rad.source === 'sensor'
           ? t(`Sensor (${rad.device_id ?? 'ESP32'}) · hace ${Math.round(rad.age_s)} s`, `Sensor (${rad.device_id ?? 'ESP32'}) · ${Math.round(rad.age_s)} s ago`)
           : t(`Simulación · sin lecturas en ${rad.live_window_s / 60} min`, `Simulation · no readings in ${rad.live_window_s / 60} min`)}
-          {rad && ` · ${t('últimos 5 min · umbrales de demo', 'last 5 min · demo thresholds')} ${rad.thresholds_usvh.join(' / ')}`}</small>
+          {rad && ` · ${t('últimos 5 min · máximo permitido', 'last 5 min · allowed maximum')} ${rad.max_usvh ?? 17} µSv/h (${((rad.max_usvh ?? 17) / 1000).toFixed(3)} mSv/h)`}</small>
       </article>
       <article className="eva-coords">
         <div><span>X</span><b>{pos?.x.toFixed(1) ?? '—'}</b><small>m</small></div>
