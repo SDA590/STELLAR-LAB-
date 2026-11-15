@@ -12,7 +12,7 @@ const scenarios = () => [
   { id: 'fever', icon: '🌡', title: t('Fiebre', 'Fever'), text: t('38,6 °C + pulso alto → nivel 3 y reporte a Tierra', '38.6 °C + high heart rate → level 3 and Earth report') },
   { id: 'leads_off', icon: '⚡', title: t('Electrodos sueltos', 'Loose electrodes'), text: t('Lectura poco confiable', 'Unreliable reading') },
   { id: 'eva_far', icon: '🚀', title: t('Lejos de la estación', 'Far from station'), text: t('La EVA pasa de 25 m (cable)', 'EVA goes beyond 25 m (tether)') },
-  { id: 'solar_storm', icon: '☀', title: t('Tormenta solar', 'Solar storm'), text: t('La radiación de la nave sube a ~1800 µSv/h (vista EVA)', 'Ship radiation rises to ~1800 µSv/h (EVA view)') },
+  { id: 'solar_storm', icon: '☀', title: t('Tormenta solar', 'Solar storm'), text: t('La radiación de la nave sube a ~150 µSv/h, 9× el máximo (vista EVA)', 'Ship radiation rises to ~150 µSv/h, 9× the maximum (EVA view)') },
 ]
 
 /** Botón "Demo" de la barra superior: provoca cambios en la SIMULACIÓN para mostrar las alertas. */
