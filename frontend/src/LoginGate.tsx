@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { UNAUTHORIZED_EVENT } from './api'
+import { LangSwitch, t, useLang } from './i18n'
 
 type GateState = 'checking' | 'locked' | 'open'
 
@@ -10,6 +11,7 @@ export default function LoginGate({ children }: { children: ReactNode }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [sending, setSending] = useState(false)
+  useLang() // vuelve a dibujar toda la app al cambiar el idioma
 
   useEffect(() => {
     let alive = true
@@ -29,9 +31,9 @@ export default function LoginGate({ children }: { children: ReactNode }) {
     try {
       const res = await fetch('/api/login', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) })
       if (res.ok) { setPassword(''); setState('open') }
-      else setError(res.status === 401 ? 'Contraseña incorrecta.' : 'No se pudo verificar. Intenta de nuevo.')
+      else setError(res.status === 401 ? t('Contraseña incorrecta.', 'Wrong password.') : t('No se pudo verificar. Intenta de nuevo.', 'Could not verify. Try again.'))
     } catch {
-      setError('No hay conexión con el servidor.')
+      setError(t('No hay conexión con el servidor.', 'No connection to the server.'))
     } finally {
       setSending(false)
     }
@@ -41,17 +43,17 @@ export default function LoginGate({ children }: { children: ReactNode }) {
 
   return <main className="profile-gate">
     <div className="gate-stars"/><div className="gate-orbit orbit-a"/><div className="gate-orbit orbit-b"/>
-    <header className="gate-brand"><div className="mark">S</div><div><b>STELLAR</b><span>CREW HEALTH · ACCESO DEL EQUIPO</span></div></header>
+    <header className="gate-brand"><img className="gate-logo" src="/brand/logo-cian.svg" alt="" /><div><b>STELLAR <em>Health</em></b><span>{t('ACCESO DEL EQUIPO', 'TEAM ACCESS')}</span></div><LangSwitch /></header>
     <section className="profile-picker login-box">
-      <span>STELLAR LAB · ACCESO RESTRINGIDO</span>
-      <h1>Ingresa la contraseña</h1>
-      <p>Esta demo está protegida para el equipo y los evaluadores.</p>
-      {state === 'checking' ? <p className="login-status">Verificando…</p> : <form onSubmit={submit}>
-        <input type="password" autoFocus autoComplete="current-password" placeholder="Contraseña" aria-label="Contraseña" value={password} onChange={e => setPassword(e.target.value)} />
-        <button type="submit" disabled={sending || !password}>{sending ? 'Verificando…' : 'Entrar'}</button>
+      <span>{t('STELLAR LAB · ACCESO RESTRINGIDO', 'STELLAR LAB · RESTRICTED ACCESS')}</span>
+      <h1>{t('Ingresa la contraseña', 'Enter the password')}</h1>
+      <p>{t('Esta demo está protegida para el equipo y los evaluadores.', 'This demo is protected for the team and the judges.')}</p>
+      {state === 'checking' ? <p className="login-status">{t('Verificando…', 'Checking…')}</p> : <form onSubmit={submit}>
+        <input type="password" autoFocus autoComplete="current-password" placeholder={t('Contraseña', 'Password')} aria-label={t('Contraseña', 'Password')} value={password} onChange={e => setPassword(e.target.value)} />
+        <button type="submit" disabled={sending || !password}>{sending ? t('Verificando…', 'Checking…') : t('Entrar', 'Sign in')}</button>
         {error && <p className="login-error" role="alert">{error}</p>}
       </form>}
-      <div className="gate-note"><i/> Prototipo educativo de demostración. No es un dispositivo médico.</div>
+      <div className="gate-note"><i/> {t('Prototipo educativo de demostración. No es un dispositivo médico.', 'Educational demo prototype. Not a medical device.')}</div>
     </section>
   </main>
 }

@@ -1,4 +1,5 @@
 // Tipos y textos compartidos del análisis (línea base, signos vitales, chequeo diario).
+import { t } from './i18n'
 
 export type Level = 'calibrating' | 'normal' | 'unreliable' | 'observe' | 'alert'
 
@@ -27,21 +28,24 @@ export type Checkin = {
   systolic_mmhg: number | null; diastolic_mmhg: number | null; temperature_c: number | null; notes: string | null
 }
 
-const LEVELS: Record<Level, { label: string; short: string; tone: string; title: string }> = {
-  calibrating: { label: 'Calibrando', short: 'BASE…', tone: 'blue', title: 'Calibrando tu línea base' },
-  normal: { label: 'Normal', short: 'NORMAL', tone: 'mint', title: 'Dentro de tu normal' },
-  unreliable: { label: 'Poco confiable', short: 'SEÑAL', tone: 'gray', title: 'Lectura poco confiable' },
-  observe: { label: 'Observar', short: 'OBSERVAR', tone: 'amber', title: 'Cambio que conviene observar' },
-  alert: { label: 'Alerta', short: 'ALERTA', tone: 'red', title: 'Cambio importante frente a tu base' },
+function levels(): Record<Level, { label: string; short: string; tone: string; title: string }> {
+  return {
+    calibrating: { label: t('Calibrando', 'Calibrating'), short: t('BASE…', 'BASE…'), tone: 'blue', title: t('Calibrando tu línea base', 'Calibrating your baseline') },
+    normal: { label: 'Normal', short: 'NORMAL', tone: 'mint', title: t('Dentro de tu normal', 'Within your normal') },
+    unreliable: { label: t('Poco confiable', 'Unreliable'), short: t('SEÑAL', 'SIGNAL'), tone: 'gray', title: t('Lectura poco confiable', 'Unreliable reading') },
+    observe: { label: t('Observar', 'Observe'), short: t('OBSERVAR', 'OBSERVE'), tone: 'amber', title: t('Cambio que conviene observar', 'A change worth watching') },
+    alert: { label: t('Alerta', 'Alert'), short: t('ALERTA', 'ALERT'), tone: 'red', title: t('Cambio importante frente a tu base', 'Significant change from your baseline') },
+  }
 }
 
 export function levelInfo(level?: Level | null) {
-  return LEVELS[level ?? 'calibrating'] ?? LEVELS.calibrating
+  const all = levels()
+  return all[level ?? 'calibrating'] ?? all.calibrating
 }
 
 export type Alert = {
   id: string; level: 0 | 1 | 2 | 3; level_title: string; who: string; title: string; reason: string
-  actions: string[]; hazard: string; link: 'Wellness' | 'Exercise Coach' | null; evidence: string[]
+  actions: string[]; hazard: string; link: 'Wellness' | 'Exercise Coach' | 'EVA' | null; evidence: string[]
 }
 
 export type Report = {
