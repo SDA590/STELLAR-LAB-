@@ -453,3 +453,13 @@ nav button span.nav-badge{width:auto;font-size:11px;color:#08121F}nav button.act
 .eva-crew em{font-style:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .eva-crew small{font:700 10px "Inter";letter-spacing:.06em;color:var(--muted);border:1px solid var(--line);border-radius:10px;padding:2px 6px}
 .eva-crew small.real{color:#35c99a;border-color:rgba(53,201,154,.45)}
+.eva-rad{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:12px 14px;display:grid;gap:6px}
+.eva-rad>span{font:600 11px "Inter";letter-spacing:.08em;color:var(--muted)}
+.eva-rad-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.eva-rad-top b{font:700 28px "Space Grotesk"}.eva-rad-top b small{font-size:13px;color:var(--text-2)}
+.eva-rad-top em{font:700 10px "Inter";letter-spacing:.06em;font-style:normal;text-transform:uppercase;border:1px solid;border-radius:10px;padding:2px 8px}
+.eva-rad p{margin:0;font-size:12.5px;color:var(--text-2)}
+.eva-rad-spark{width:100%;height:54px;display:block;background:rgba(255,216,74,.04);border-radius:6px}
+.eva-rad-src{font-size:10.5px;color:var(--muted)}
+.eva-source.rad{background:rgba(255,216,74,.1)}
+.eva-label{padding:3px 8px}.eva-label b{font-size:13px}.eva-label small{font-size:9px}
