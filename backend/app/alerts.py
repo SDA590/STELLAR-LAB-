@@ -59,6 +59,13 @@ def _alert(id_: str, level: int, title: str, reason: str, actions: list[str], ha
     }
 
 
+def _is_up(sig: dict) -> bool:
+    """¿La señal está alta? Manda el límite de seguridad si lo hay; si no, la línea base."""
+    if sig.get("absolute"):
+        return sig["absolute"] == "high"
+    return (sig.get("delta") or 0) > 0
+
+
 def _hours_since(iso: str | None, now: float) -> float:
     from .supabase_store import parse_ts
     if not iso:
@@ -75,8 +82,8 @@ def evaluate(base: dict, sample: dict, vitals: dict, checkins: list[dict], now: 
     out: list[dict] = []
     hr = base.get("signals", {}).get("heart_rate_bpm", {}) or {}
     rr = base.get("signals", {}).get("respiration_rate_bpm", {}) or {}
-    hr_up = hr.get("level") in ("observe", "alert") and (hr.get("delta") or 0) > 0
-    rr_up = rr.get("level") in ("observe", "alert") and (rr.get("delta") or 0) > 0
+    hr_up = hr.get("level") in ("observe", "alert") and _is_up(hr)
+    rr_up = rr.get("level") in ("observe", "alert") and _is_up(rr)
 
     # --- Calidad de señal -------------------------------------------------
     if sample.get("leads_off") or base.get("level") == "unreliable":
@@ -117,8 +124,10 @@ def evaluate(base: dict, sample: dict, vitals: dict, checkins: list[dict], now: 
         for sig, key, hazard_key in ((hr, "hr", "gravity"), (rr, "rr", "closed")):
             if sig.get("level") not in ("observe", "alert"):
                 continue
-            up = (sig.get("delta") or 0) > 0
-            serious = sig["level"] == "alert" and (sig.get("duration_s") or 0) >= 60
+            up = _is_up(sig)
+            absolute = sig.get("absolute")
+            # Fuera del límite de seguridad "alert" (p. ej. pulso > 130 en reposo) escala más rápido: 30 s.
+            serious = sig["level"] == "alert" and (sig.get("duration_s") or 0) >= (30 if absolute and sig.get("safety_level") == "alert" else 60)
             level = 2 if serious else 1
             actions = ([tr("Haz una pausa de 5 min sentado.", "Take a 5-minute seated break."),
                         tr("Respira lento (ejercicio 4·6 en Bienestar).", "Breathe slowly (4·6 exercise in Wellness)."),
@@ -127,11 +136,21 @@ def evaluate(base: dict, sample: dict, vitals: dict, checkins: list[dict], now: 
                                    tr("Levántate despacio y observa si hay mareo.", "Stand up slowly and watch for dizziness.")])
             if level == 2:
                 actions.append(tr("Si sigue igual, avisa al oficial médico.", "If it stays the same, tell the medical officer."))
-            title = (tr(f"{sig['label']} por encima de tu base", f"{sig['label']} above your baseline") if up
-                     else tr(f"{sig['label']} por debajo de tu base", f"{sig['label']} below your baseline"))
-            out.append(_alert(key, level, title, sig["message"], actions, hazard_key, "Wellness",
-                              [f"z = {sig.get('z')}", tr(f"base {sig.get('center')} {sig.get('unit')}", f"baseline {sig.get('center')} {sig.get('unit')}"),
-                               tr(f"fuera de rango {duration_text(sig.get('duration_s') or 0)}", f"out of range {duration_text(sig.get('duration_s') or 0)}")]))
+            if absolute:
+                strong = sig.get("safety_level") == "alert"
+                title = (tr(f"{sig['label']} {'muy alto' if strong else 'alto'}", f"{sig['label']} {'very high' if strong else 'high'}") if up
+                         else tr(f"{sig['label']} {'muy bajo' if strong else 'bajo'}", f"{sig['label']} {'very low' if strong else 'low'}"))
+            else:
+                title = (tr(f"{sig['label']} por encima de tu base", f"{sig['label']} above your baseline") if up
+                         else tr(f"{sig['label']} por debajo de tu base", f"{sig['label']} below your baseline"))
+            evidence = [tr(f"ahora {sig.get('current')} {sig.get('unit')}", f"now {sig.get('current')} {sig.get('unit')}")]
+            if absolute:
+                evidence.append(tr(f"seguridad {sig.get('safe_low'):.0f}–{sig.get('safe_high'):.0f} {sig.get('unit')}",
+                                   f"safety {sig.get('safe_low'):.0f}–{sig.get('safe_high'):.0f} {sig.get('unit')}"))
+            if sig.get("z") is not None:
+                evidence += [f"z = {sig.get('z')}", tr(f"base {sig.get('center')} {sig.get('unit')}", f"baseline {sig.get('center')} {sig.get('unit')}")]
+            evidence.append(tr(f"fuera de rango {duration_text(sig.get('duration_s') or 0)}", f"out of range {duration_text(sig.get('duration_s') or 0)}"))
+            out.append(_alert(key, level, title, sig["message"], actions, hazard_key, "Wellness", evidence))
 
     # --- Temperatura y presión (medición automática simulada o manual) -----
     temp = (vitals.get("latest_temp") or {}).get("temperature_c")
