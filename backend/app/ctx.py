@@ -16,7 +16,7 @@ LANG: ContextVar[str] = ContextVar("lang", default="es")
 SCENARIOS: ContextVar[dict[str, tuple[str, float]]] = ContextVar("scenarios", default={})
 
 DEMO_COOKIE = "stellar_demo"
-SCENARIO_IDS = ("fatigue", "stress", "fever", "leads_off", "drift")
+SCENARIO_IDS = ("fatigue", "stress", "fever", "leads_off", "eva_far")
 SCENARIO_MAX_AGE_S = 2 * 3600  # un escenario olvidado se apaga solo a las 2 h
 RAMP_S = 30  # el cambio aparece de forma gradual en 30 s
 
