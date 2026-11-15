@@ -445,3 +445,4 @@ nav button span.nav-badge{width:auto;font-size:11px;color:#08121F}nav button.act
 }
 .eva-controls{top:auto;bottom:34px;right:14px;flex-wrap:wrap;justify-content:flex-end;max-width:calc(100% - 28px)}
 .eva-hud{max-width:calc(100% - 28px)}
+.phone-stat .walk-on{color:#35c99a;font-weight:700}

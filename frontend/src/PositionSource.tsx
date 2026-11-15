@@ -64,7 +64,7 @@ export function PhoneControls({ astronautId, compact = false }: { astronautId: s
       : <>
         <button onClick={() => resetPhone()}>{t('Poner en cero aquí', 'Zero here')}</button>
         <button onClick={() => stopPhone()}>{t('Detener', 'Stop')}</button>
-        <span className="phone-stat"><b>{ph.steps}</b> {t('pasos', 'steps')} · {ph.compass ? `${ph.heading ?? 0}°` : t('sin brújula', 'no compass')} · {ph.lastSentOk === false ? t('sin envío', 'not sending') : ph.lastSentOk ? t('enviando', 'sending') : '…'}</span>
+        <span className="phone-stat"><b>{ph.steps}</b> {t('pasos', 'steps')} · <span className={ph.walking ? 'walk-on' : ''}>{ph.walking ? t('caminando', 'walking') : t('quieto', 'still')}</span>{ph.ignored > 0 ? ` · ${ph.ignored} ${t('ignorados', 'ignored')}` : ''} · {ph.compass ? `${ph.heading ?? 0}°` : t('sin brújula', 'no compass')} · {ph.lastSentOk === false ? t('sin envío', 'not sending') : ph.lastSentOk ? t('enviando', 'sending') : '…'}</span>
       </>}
     {ph.error && !mine && <small className="phone-err">{errorText(ph.error)}</small>}
     {mine && !ph.motion && <small className="phone-err">{ph.error === 'denied' ? errorText('denied') : t('Esperando el acelerómetro… (en una PC no hay sensor)', 'Waiting for the accelerometer… (a PC has no sensor)')}</small>}
