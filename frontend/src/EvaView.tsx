@@ -9,6 +9,32 @@ import { fallbackText, PhoneControls, positionUrl, sourceLabel, SourceSwitch, ty
 import { profiles } from './profiles'
 
 type CrewPosition = Position & { astronaut_id: string }
+type Radiation = {
+  dose_rate_usvh: number; level: 0 | 1 | 2 | 3; level_name: string; action: string; source: 'sensor' | 'simulation'
+  device_id: string | null; age_s: number; live_window_s: number; thresholds_usvh: number[]; history: [number, number][]
+}
+const RAD_COLOR = ['#35C99A', '#F2B84B', '#FF8A4C', '#FF5A5F']
+const radLevelText = (l: number) => [t('Nominal', 'Nominal'), t('Elevada', 'Elevated'), t('Alta', 'High'), t('Tormenta solar', 'Solar storm')][l]
+const radActionText = (l: number) => [
+  t('Dentro de lo esperado para la misión. Sin acción.', 'Within mission expectations. No action.'),
+  t('Observar: limitar el tiempo de EVA y revisar los dosímetros.', 'Watch: limit EVA time and check the dosimeters.'),
+  t('Alerta: terminar la EVA y volver a la cápsula.', 'Alert: end the EVA and return to the capsule.'),
+  t('Alerta máxima: toda la tripulación al refugio blindado de la nave.', 'Maximum alert: whole crew to the shielded shelter.'),
+][l]
+/** 0..1 para la lluvia: escala logarítmica (10 µSv/h -> 0, 2000 µSv/h -> 1). */
+const radIntensity = (rate: number) => Math.min(1, Math.max(0, Math.log10(Math.max(rate, 1) / 10) / Math.log10(200)))
+
+function RadSpark({ h, th }: { h: [number, number][]; th: number[] }) {
+  if (h.length < 2) return null
+  const W = 260, H = 54, span = 300
+  const max = Math.max(60, ...h.map(p => p[1])) * 1.15
+  const y = (v: number) => (H - (v / max) * H).toFixed(1)
+  const pts = h.map(([sec, v]) => `${(((sec + span) / span) * W).toFixed(1)},${y(v)}`).join(' ')
+  return <svg className="eva-rad-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+    {th.filter(v => v < max).map((v, i) => <line key={v} x1="0" x2={W} y1={y(v)} y2={y(v)} stroke={RAD_COLOR[i + 1]} strokeDasharray="3 3" strokeOpacity="0.55" />)}
+    <polyline points={pts} fill="none" stroke="#FFD84A" strokeWidth="1.8" vectorEffect="non-scaling-stroke" />
+  </svg>
+}
 const crewInfo = (id: string) => profiles.find(p => p.id === id)
 const srcTag = (s?: Position['source']) => s === 'hardware' ? 'MPU' : s === 'phone' ? t('CEL', 'PHONE') : 'SIM'
 
@@ -106,10 +132,13 @@ function buildAstronaut(accent = '#45D6C5') {
 export default function EvaView({ astronautId, name }: { astronautId: string; name: string }) {
   const mountRef = useRef<HTMLDivElement>(null)
   const labelRef = useRef<HTMLDivElement>(null)
-  const sceneRef = useRef<{ setData: (p: Position) => void; setCrew: (items: CrewPosition[]) => void; reset: () => void } | null>(null)
+  const sceneRef = useRef<{ setData: (p: Position) => void; setCrew: (items: CrewPosition[]) => void; setRadiation: (k: number, on: boolean) => void; reset: () => void } | null>(null)
   const [pos, setPos] = useState<Position | null>(null)
   const [crew, setCrew] = useState<CrewPosition[]>([])
   const [showCrew, setShowCrew] = useState(true)
+  const [rad, setRad] = useState<Radiation | null>(null)
+  const [showRad, setShowRadState] = useState(() => { try { return localStorage.getItem('stellar-rad-rain') !== 'off' } catch { return true } })
+  const setShowRad = (on: boolean) => { setShowRadState(on); try { localStorage.setItem('stellar-rad-rain', on ? 'on' : 'off') } catch { /* sin almacenamiento */ } }
   const [prefer, setPrefer] = usePositionPrefer()
   const [error, setError] = useState(false)
 
@@ -133,6 +162,35 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
     for (let i = 0; i < starPos.length; i++) starPos[i] = (Math.random() - 0.5) * 900
     const stars = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(starPos, 3)), new THREE.PointsMaterial({ color: '#c8d6e5', size: 0.8 }))
     scene.add(stars)
+
+    // Radiación: "lluvia" amarilla de partículas. Más radiación = más gotas, más rápidas y más brillantes.
+    const RAIN_MAX = 2200, RAIN_R = 45, RAIN_TOP = 40, RAIN_BOTTOM = -25
+    const rainPos = new Float32Array(RAIN_MAX * 6)
+    const rainSpeed = new Float32Array(RAIN_MAX)
+    for (let i = 0; i < RAIN_MAX; i++) {
+      const a = Math.random() * Math.PI * 2, r = RAIN_R * Math.sqrt(Math.random())
+      const x = Math.cos(a) * r, z = Math.sin(a) * r, y0 = RAIN_BOTTOM + Math.random() * (RAIN_TOP - RAIN_BOTTOM)
+      rainPos.set([x, y0, z, x, y0 - 0.6, z], i * 6); rainSpeed[i] = 0.6 + Math.random() * 0.8
+    }
+    const rainGeo = new THREE.BufferGeometry(); rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3))
+    const rainMat = new THREE.LineBasicMaterial({ color: '#FFD84A', transparent: true, opacity: 0.3, depthWrite: false, blending: THREE.AdditiveBlending })
+    const rain = new THREE.LineSegments(rainGeo, rainMat); rain.frustumCulled = false; scene.add(rain)
+    const rainLow = new THREE.Color('#FFD84A'), rainHigh = new THREE.Color('#FF9F3A')
+    let rainK = 0, rainTarget = 0, lastT = 0
+    const setRadiation = (k: number, on: boolean) => { rainTarget = k; rain.visible = on }
+    const updateRain = (dt: number) => {
+      rainK += (rainTarget - rainK) * Math.min(1, dt * 1.5)
+      const count = Math.floor(120 + rainK * (RAIN_MAX - 120))
+      const speed = 8 + 32 * rainK, len = 0.6 + 2.6 * rainK
+      for (let i = 0; i < count; i++) {
+        const o = i * 6
+        let y = rainPos[o + 1] - rainSpeed[i] * speed * dt
+        if (y < RAIN_BOTTOM) y += RAIN_TOP - RAIN_BOTTOM
+        rainPos[o + 1] = y; rainPos[o + 4] = y - len
+      }
+      rainGeo.setDrawRange(0, count * 2); rainGeo.attributes.position.needsUpdate = true
+      rainMat.opacity = 0.22 + 0.4 * rainK; rainMat.color.lerpColors(rainLow, rainHigh, rainK)
+    }
 
     // Planeta de fondo
     const planet = new THREE.Mesh(new THREE.SphereGeometry(260, 64, 48), new THREE.MeshStandardMaterial({ color: '#1d5d9b', emissive: '#08223f', roughness: 0.9 }))
@@ -178,7 +236,7 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
         const text = `${crewInfo(it.astronaut_id)?.shortName ?? it.astronaut_id} · ${srcTag(it.source)}`
         if (text !== m.text) {
           scene.remove(m.label); (m.label.material as THREE.SpriteMaterial).map?.dispose()
-          m.label = textSprite(text, crewInfo(it.astronaut_id)?.accent ?? '#c8d6e5', 60, 512); m.label.scale.set(9, 2.25, 1)
+          m.label = textSprite(text, crewInfo(it.astronaut_id)?.accent ?? '#c8d6e5', 60, 512); m.label.scale.set(4.2, 1.05, 1)
           scene.add(m.label); m.text = text
         }
         m.trail.geometry.dispose(); m.trail.geometry = new THREE.BufferGeometry().setFromPoints(it.trail.map(toScene))
@@ -216,10 +274,12 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
       astronaut.rotation.y = t * 0.3; astronaut.rotation.z = Math.sin(t * 0.7) * 0.15
       for (const m of mates.values()) {
         m.body.position.lerp(m.target, 0.06); m.body.rotation.y = t * 0.3
-        m.label.position.copy(m.body.position).add(new THREE.Vector3(0, 2.2, 0))
+        m.label.position.copy(m.body.position).add(new THREE.Vector3(0, 1.5, 0))
       }
       tether.geometry.setFromPoints([new THREE.Vector3(), astronaut.position.clone()]); tether.computeLineDistances()
       stars.rotation.y = t * 0.002
+      if (rain.visible) updateRain(Math.min(0.1, t - lastT))
+      lastT = t
       controls.update(); renderer.render(scene, camera)
       // Etiqueta de distancia encima del astronauta
       const label = labelRef.current
@@ -230,7 +290,7 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
       }
     }
     loop()
-    sceneRef.current = { setData, setCrew, reset }
+    sceneRef.current = { setData, setCrew, setRadiation, reset }
     return () => {
       cancelAnimationFrame(frame); observer.disconnect(); controls.dispose(); renderer.dispose()
       scene.traverse(o => { const m = o as THREE.Mesh; m.geometry?.dispose?.() })
@@ -269,7 +329,19 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
     return () => { alive = false; window.clearInterval(timer) }
   }, [prefer, showCrew, astronautId])
 
+  // Radiación de la nave, cada 2 s
+  useEffect(() => {
+    let alive = true
+    const load = async () => {
+      try { const res = await apiFetch('/api/radiation'); if (res.ok && alive) setRad(await res.json()) } catch { /* sin cambios */ }
+    }
+    load(); const timer = window.setInterval(load, 2000)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [])
+  useEffect(() => { sceneRef.current?.setRadiation(rad ? radIntensity(rad.dose_rate_usvh) : 0, showRad) }, [rad, showRad])
+
   const zone = { ...(pos ? ZONE[pos.zone] : ZONE.cerca), ...zoneText(pos?.zone ?? 'cerca') }
+  const radColor = RAD_COLOR[rad?.level ?? 0]
   return <section className="eva-page">
     <div className="eva-stage">
       <div ref={mountRef} className="eva-canvas" />
@@ -277,11 +349,13 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
       <div className="eva-hud">
         <span className={`eva-source ${pos && pos.source !== 'simulation' ? 'real' : ''}`}>{t('POSICIÓN', 'POSITION')} · {sourceLabel(pos?.source)}</span>
         {fallbackText(pos) && <span className="eva-source warn">{fallbackText(pos)}</span>}
+        {rad && <span className="eva-source rad" style={{ color: radColor, borderColor: radColor }}>{t('RADIACIÓN', 'RADIATION')} · {rad.dose_rate_usvh.toFixed(rad.dose_rate_usvh < 100 ? 1 : 0)} µSv/h · {rad.source === 'sensor' ? t('SENSOR', 'SENSOR') : 'SIM'}</span>}
         {error && <span className="eva-source off">{t('Sin conexión con la API', 'No connection to the API')}</span>}
       </div>
       <div className="eva-controls">
         <button onClick={() => sceneRef.current?.reset()}>{t('Centrar vista', 'Reset view')}</button>
         <label><input type="checkbox" checked={showCrew} onChange={e => setShowCrew(e.target.checked)} /> {t('Tripulación', 'Crew')}</label>
+        <label><input type="checkbox" checked={showRad} onChange={e => setShowRad(e.target.checked)} /> {t('Radiación', 'Radiation')}</label>
         <SourceSwitch prefer={prefer} onChange={setPrefer} pos={pos} />
       </div>
       <p className="eva-hint">{t('Arrastra para girar · rueda para acercar', 'Drag to rotate · scroll to zoom')}</p>
@@ -294,6 +368,19 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
         <p><i style={{ background: zone.color }} />{zone.label} · {zone.text}</p>
         <div className="eva-bar"><i style={{ width: `${Math.min(100, ((pos?.distance_m ?? 0) / (pos?.tether_m ?? 25)) * 100)}%`, background: zone.color }} /><em style={{ left: `${((pos?.safe_m ?? 15) / (pos?.tether_m ?? 25)) * 100}%` }} /></div>
         <small className="eva-scale"><span>0 m</span><span>{pos?.safe_m ?? 15} m</span><span>{pos?.tether_m ?? 25} m {t('cable', 'tether')}</span></small>
+      </article>
+      <article className="eva-rad" style={{ borderColor: radColor }}>
+        <span>{t('RADIACIÓN EN LA NAVE', 'RADIATION ON THE SHIP')}</span>
+        <div className="eva-rad-top">
+          <b style={{ color: radColor }}>{rad ? rad.dose_rate_usvh.toFixed(rad.dose_rate_usvh < 100 ? 1 : 0) : '—'}<small> µSv/h</small></b>
+          {rad && <em style={{ color: radColor, borderColor: radColor }}>{radLevelText(rad.level)}</em>}
+        </div>
+        {rad && <p>{radActionText(rad.level)}</p>}
+        {rad && <RadSpark h={rad.history} th={rad.thresholds_usvh} />}
+        <small className="eva-rad-src">{!rad ? '…' : rad.source === 'sensor'
+          ? t(`Sensor (${rad.device_id ?? 'ESP32'}) · hace ${Math.round(rad.age_s)} s`, `Sensor (${rad.device_id ?? 'ESP32'}) · ${Math.round(rad.age_s)} s ago`)
+          : t(`Simulación · sin lecturas en ${rad.live_window_s / 60} min`, `Simulation · no readings in ${rad.live_window_s / 60} min`)}
+          {rad && ` · ${t('últimos 5 min · umbrales de demo', 'last 5 min · demo thresholds')} ${rad.thresholds_usvh.join(' / ')}`}</small>
       </article>
       <article className="eva-coords">
         <div><span>X</span><b>{pos?.x.toFixed(1) ?? '—'}</b><small>m</small></div>

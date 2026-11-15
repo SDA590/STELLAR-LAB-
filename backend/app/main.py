@@ -67,6 +67,8 @@ class TelemetryIn(BaseModel):
     area_m2: float = Field(default=0, ge=0)
     steps: int = Field(default=0, ge=0)
     battery_pct: int = Field(default=100, ge=0, le=100)
+    # Tasa de dosis de radiación en la nave (µSv/h). Columna radiation_dose_rate_usvh de Supabase.
+    radiation_dose_rate_usvh: float | None = Field(default=None, ge=0)
     timestamp_ms: int | None = None
 
 
@@ -83,7 +85,7 @@ class PhoneIn(BaseModel):
 class DemoIn(BaseModel):
     """Activa (o quita, con scenario=None) un escenario de demo. Sin astronauta = quitar todos."""
     astronaut_id: AstronautId | None = None
-    scenario: Literal["fatigue", "stress", "fever", "leads_off", "eva_far"] | None = None
+    scenario: Literal["fatigue", "stress", "fever", "leads_off", "eva_far", "solar_storm"] | None = None
 
 
 class LoginIn(BaseModel):
@@ -206,6 +208,7 @@ SCENARIO_EFFECTS = {
     "fever": {"heart": 28, "respiration": 2},
     "eva_far": {"heart": 6, "respiration": 1},
     "leads_off": {"heart": 0, "respiration": 0},
+    "solar_storm": {"heart": 0, "respiration": 0},  # solo sube la radiación simulada de la nave
 }
 # Chequeo "virtual" que acompaña a algunos escenarios (como si el astronauta lo hubiera llenado).
 SCENARIO_CHECKINS = {
@@ -285,6 +288,15 @@ def is_phone(row: dict) -> bool:
     return str(row.get("device_id") or "").startswith(PHONE_PREFIX)
 
 
+# Filas SOLO de radiación (p. ej. inserciones manuales con device_id "rad-nave"): no son el ESP32
+# del astronauta, así que no cuentan para pulso, respiración ni posición.
+RADIATION_PREFIX = "rad-"
+
+
+def is_radiation_only(row: dict) -> bool:
+    return str(row.get("device_id") or "").startswith(RADIATION_PREFIX)
+
+
 def real_rows(astronaut_id: str | None, window_s: float, kind: str = "node") -> list[dict]:
     """Filas reales (Supabase + POST local) de los últimos `window_s` s, ordenadas por tiempo.
 
@@ -295,8 +307,10 @@ def real_rows(astronaut_id: str | None, window_s: float, kind: str = "node") -> 
     for key, packets in local_packets.items():
         if astronaut_id in (None, key):
             rows.extend(p for p in packets if p["_ts"] >= since)
-    if kind != "all":
-        rows = [r for r in rows if is_phone(r) == (kind == "phone")]
+    if kind == "node":
+        rows = [r for r in rows if not is_phone(r) and not is_radiation_only(r)]
+    elif kind == "phone":
+        rows = [r for r in rows if is_phone(r)]
     rows.sort(key=lambda r: r["_ts"])
     return rows
 
@@ -601,7 +615,7 @@ def get_crew_positions(prefer: Literal["mpu", "phone", "sim"] = "mpu", limit: in
 
 def position_for(astronaut_id: str, limit: int, prefer: str, rows: list[dict]) -> dict:
     """Elige, segundo a segundo, la fuente de posición (MPU / celular / simulación) de un astronauta."""
-    mpu_rows = live_per_second([r for r in rows if not is_phone(r)], limit)
+    mpu_rows = live_per_second([r for r in rows if not is_phone(r) and not is_radiation_only(r)], limit)
     phone_rows = live_per_second([r for r in rows if is_phone(r)], limit)
     samples = []
     for mpu, phone in zip(mpu_rows, phone_rows):
@@ -681,3 +695,59 @@ def post_demo(body: DemoIn, request: Request, response: Response) -> dict:
         response.delete_cookie(ctx.DEMO_COOKIE, path="/")
     ctx.SCENARIOS.set(items)
     return demo_state(items)
+
+
+# --------------------------------------------------------------------------- #
+# Radiación de la nave (vista EVA)
+# --------------------------------------------------------------------------- #
+# Una lectura (del ESP32 o insertada a mano en Supabase) sigue vigente RADIATION_LIVE_S;
+# si no llega ninguna, se usa la radiación simulada.
+RADIATION_LIVE_S = 120
+RADIATION_HISTORY_S = 300
+# Umbrales de DEMO en µSv/h (ajustables). Referencia aproximada: en la ISS se miden del orden
+# de 15–40 µSv/h; una tormenta solar puede multiplicarlo muchas veces.
+RADIATION_LEVELS = (
+    (50.0, "nominal", 0, "Dentro de lo esperado para la misión. Sin acción."),
+    (250.0, "elevada", 1, "Observar: limitar el tiempo de EVA y revisar los dosímetros."),
+    (1000.0, "alta", 2, "Alerta: terminar la EVA y volver a la cápsula."),
+    (float("inf"), "tormenta", 3, "Alerta máxima: toda la tripulación al refugio blindado de la nave."),
+)
+STORM_DOSE_RATE_USVH = 1800.0
+
+
+def radiation_level(rate: float) -> tuple[str, int, str]:
+    for limit, name, level, action in RADIATION_LEVELS:
+        if rate < limit:
+            return name, level, action
+    return RADIATION_LEVELS[-1][1:]
+
+
+def simulated_radiation(ts: float) -> float:
+    """Radiación simulada de fondo (~24 µSv/h); el escenario `solar_storm` la sube en 30 s."""
+    t = ts % 86400
+    base = 24 + 4 * sin(t / 40) + _noise(t, 11, 1.5)
+    k = max((ctx.scenario(a, ts)[2] for a in ASTRONAUTS if ctx.scenario(a, ts)[0] == "solar_storm"), default=0.0)
+    return round(base + k * (STORM_DOSE_RATE_USVH - base), 1)
+
+
+@app.get("/api/radiation")
+def get_radiation() -> dict:
+    """Tasa de dosis de radiación en la nave: última lectura real o simulación, con nivel y acción."""
+    now = time.time()
+    rows = [r for r in real_rows(None, RADIATION_HISTORY_S, "all") if r.get("radiation_dose_rate_usvh") is not None]
+    live = bool(rows) and now - rows[-1]["_ts"] < RADIATION_LIVE_S
+    if live:
+        last = rows[-1]
+        rate = float(last["radiation_dose_rate_usvh"])
+        history = [[round(r["_ts"] - now, 1), float(r["radiation_dose_rate_usvh"])] for r in rows]
+        source, device, age = "sensor", last.get("device_id"), round(now - last["_ts"], 1)
+    else:
+        rate = simulated_radiation(now)
+        history = [[-float(s), simulated_radiation(now - s)] for s in range(RADIATION_HISTORY_S, -1, -5)]
+        source, device, age = "simulation", None, 0.0
+    name, level, action = radiation_level(rate)
+    return {
+        "dose_rate_usvh": rate, "level": level, "level_name": name, "action": action,
+        "source": source, "device_id": device, "age_s": age, "live_window_s": RADIATION_LIVE_S,
+        "thresholds_usvh": [limit for limit, *_ in RADIATION_LEVELS[:-1]], "history": history,
+    }
