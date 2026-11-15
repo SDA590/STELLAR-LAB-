@@ -4,11 +4,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import Icon from './Icon'
 import { apiFetch } from './api'
 import { t } from './i18n'
-
-type Position = {
-  source: 'hardware' | 'simulation'; x: number; y: number; z: number; distance_m: number; speed_m_s: number | null
-  max_distance_m: number; zone: 'cabina' | 'cerca' | 'atencion' | 'fuera'; safe_m: number; tether_m: number; cabin_m?: number; trail: [number, number, number][]
-}
+import { usePositionPrefer } from './phoneTracker'
+import { fallbackText, PhoneControls, positionUrl, sourceLabel, SourceSwitch, type Position } from './PositionSource'
 
 const ZONE = {
   cabina: { color: '#45D6C5' },
@@ -106,7 +103,7 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
   const labelRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<{ setData: (p: Position) => void; reset: () => void } | null>(null)
   const [pos, setPos] = useState<Position | null>(null)
-  const [demo, setDemo] = useState(false)
+  const [prefer, setPrefer] = usePositionPrefer()
   const [error, setError] = useState(false)
 
   // Escena 3D: se crea una sola vez
@@ -202,7 +199,7 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
     let alive = true
     const load = async () => {
       try {
-        const res = await apiFetch(`/api/position?astronaut_id=${astronautId}&limit=120${demo ? '&demo=true' : ''}`)
+        const res = await apiFetch(positionUrl(astronautId, prefer))
         if (!res.ok) throw new Error(String(res.status))
         const data: Position = await res.json()
         if (alive) { setPos(data); setError(false); sceneRef.current?.setData(data) }
@@ -210,7 +207,7 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
     }
     load(); const timer = window.setInterval(load, 1000)
     return () => { alive = false; window.clearInterval(timer) }
-  }, [astronautId, demo])
+  }, [astronautId, prefer])
 
   const zone = { ...(pos ? ZONE[pos.zone] : ZONE.cerca), ...zoneText(pos?.zone ?? 'cerca') }
   return <section className="eva-page">
@@ -218,12 +215,13 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
       <div ref={mountRef} className="eva-canvas" />
       <div ref={labelRef} className="eva-label" style={{ borderColor: zone.color }}><b>{pos ? `${pos.distance_m.toFixed(1)} m` : '—'}</b><small>{name}</small></div>
       <div className="eva-hud">
-        <span className={`eva-source ${pos?.source === 'hardware' ? 'real' : ''}`}>{pos?.source === 'hardware' ? t('POSICIÓN · ESP32 + MPU6050', 'POSITION · ESP32 + MPU6050') : t('POSICIÓN · SIMULACIÓN DE EVA', 'POSITION · EVA SIMULATION')}</span>
+        <span className={`eva-source ${pos && pos.source !== 'simulation' ? 'real' : ''}`}>{t('POSICIÓN', 'POSITION')} · {sourceLabel(pos?.source)}</span>
+        {fallbackText(pos) && <span className="eva-source warn">{fallbackText(pos)}</span>}
         {error && <span className="eva-source off">{t('Sin conexión con la API', 'No connection to the API')}</span>}
       </div>
       <div className="eva-controls">
         <button onClick={() => sceneRef.current?.reset()}>{t('Centrar vista', 'Reset view')}</button>
-        <label><input type="checkbox" checked={demo} onChange={e => setDemo(e.target.checked)} /> {t('Trayectoria de demostración', 'Demo path')}</label>
+        <SourceSwitch prefer={prefer} onChange={setPrefer} pos={pos} />
       </div>
       <p className="eva-hint">{t('Arrastra para girar · rueda para acercar', 'Drag to rotate · scroll to zoom')}</p>
     </div>
@@ -242,6 +240,11 @@ export default function EvaView({ astronautId, name }: { astronautId: string; na
         <div><span>Z</span><b>{pos?.z.toFixed(1) ?? '—'}</b><small>m</small></div>
         <div><span>{t('Velocidad', 'Speed')}</span><b>{pos?.speed_m_s?.toFixed(2) ?? '—'}</b><small>m/s</small></div>
         <div><span>{t('Máx. (2 min)', 'Max (2 min)')}</span><b>{pos?.max_distance_m.toFixed(1) ?? '—'}</b><small>m</small></div>
+      </article>
+      <article className="eva-phone">
+        <span>{t('FUENTE DE POSICIÓN', 'POSITION SOURCE')}</span>
+        <p>{t('Elige el sensor preferido. Si no tiene datos (o el MPU6050 se desboca a más de 40 m), se usa el otro; si ninguno envía, la simulación.', 'Pick the preferred sensor. If it has no data (or the MPU6050 drifts beyond 40 m), the other one is used; if neither sends, the simulation.')}</p>
+        <PhoneControls astronautId={astronautId} />
       </article>
       <article className="eva-note">
         <span>{t('CÓMO SE MIDE', 'HOW IT IS MEASURED')}</span>

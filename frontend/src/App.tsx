@@ -15,6 +15,7 @@ import Monitoring from './Monitoring'
 import HealthAnalytics from './HealthAnalytics'
 import CrewProfileView from './CrewProfileView'
 import DemoPanel from './DemoPanel'
+import WristView from './WristView'
 import { Line, type Sample } from './charts'
 import { bpLabel, LangSwitch, nodeTag, locale, missionDay, roleLabel, t, tempLabel, useLang } from './i18n'
 
@@ -62,6 +63,11 @@ export default function App() {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [clock, setClock] = useState(() => new Date())
   const [demoTick, setDemoTick] = useState(0)
+  // Modo muñeca: se abre con el botón del encabezado o con ?muneca en la URL; se recuerda en este navegador.
+  const [wrist, setWristState] = useState(() => {
+    try { return new URLSearchParams(location.search).has('muneca') || localStorage.getItem('stellar-wrist') === '1' } catch { return false }
+  })
+  const setWrist = (on: boolean) => { setWristState(on); try { localStorage.setItem('stellar-wrist', on ? '1' : '0') } catch { /* sin almacenamiento */ } }
 
   useEffect(() => { const timer = window.setInterval(() => setClock(new Date()), 1000); return () => window.clearInterval(timer) }, [])
 
@@ -123,6 +129,8 @@ export default function App() {
   const issues = [hrBase, rrBase].filter(s => s && ['observe', 'alert', 'unreliable'].includes(s.level)) as SignalBaseline[]
 
   if (!profile) return <ProfilePicker profiles={profiles} onSelect={selected => { setProfile(selected); setActive(selected.access === 'nasa' ? 'Mission Control' : 'Dashboard') }} />
+
+  if (wrist && profile.access !== 'nasa') return <WristView profile={profile} sample={sample} baseline={baseline} alerts={alerts} vitals={vitals} connected={connected} onExit={() => setWrist(false)} />
 
   const crew = profiles.filter(item => item.access !== 'nasa')
   const nav = profile.access === 'nasa' ? [] : ['Dashboard', 'Monitoring', 'EVA', 'Wellness', 'Exercise Coach', 'Crew Profile', 'Health Analytics', 'Alerts', 'Settings']
@@ -199,6 +207,7 @@ export default function App() {
         <span className="clock"><Icon name="reloj" size={18} />{clock.toISOString().slice(11, 16)} UTC</span>
         <span className="spacer" />
         <DemoPanel crew={crew} current={profile.id} onChange={() => setDemoTick(n => n + 1)} />
+        {profile.access !== 'nasa' && <button className="wrist-btn" onClick={() => setWrist(true)} title={t('Pantalla para la muñeca del traje (celular en horizontal)', 'Suit wrist screen (phone sideways)')}><Icon name="reloj" size={16} />{t('Muñeca', 'Wrist')}</button>}
         <LangSwitch compact />
         {profile.access !== 'nasa' && <button className="bell" aria-label={t('Alertas', 'Alerts')} onClick={() => setActive('Alerts')}><Icon name="alertas" size={18} />{activeAlerts.length > 0 && <em className={maxLevel >= 3 ? 'crit' : ''}>{activeAlerts.length}</em>}</button>}
         <button className="who" onClick={() => setProfile(null)} aria-label={t('Cambiar perfil', 'Switch profile')}>{profile.photo ? <img src={profile.photo} alt="" /> : <span className="ini">{profile.initials}</span>}<div><b>{profile.name}</b><small>{role} · {t('cambiar perfil', 'switch profile')}</small></div><Icon name="chevron-abajo" size={14} /></button>
