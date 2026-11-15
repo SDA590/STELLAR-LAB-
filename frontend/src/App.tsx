@@ -203,7 +203,7 @@ export default function App() {
         {profile.access !== 'nasa' && <button className="bell" aria-label={t('Alertas', 'Alerts')} onClick={() => setActive('Alerts')}><Icon name="alertas" size={18} />{activeAlerts.length > 0 && <em className={maxLevel >= 3 ? 'crit' : ''}>{activeAlerts.length}</em>}</button>}
         <button className="who" onClick={() => setProfile(null)} aria-label={t('Cambiar perfil', 'Switch profile')}>{profile.photo ? <img src={profile.photo} alt="" /> : <span className="ini">{profile.initials}</span>}<div><b>{profile.name}</b><small>{role} · {t('cambiar perfil', 'switch profile')}</small></div><Icon name="chevron-abajo" size={14} /></button>
       </div>
-      <div className="page-title"><Icon name={screen(active).icon} size={40} /><div><h1>{screen(active).label}</h1><p>{screen(active).subtitle}</p></div><span className={`access-badge access-${profile.access}`}>{accessBadge}</span></div>
+      {active !== 'Exercise Coach' && <div className="page-title"><Icon name={screen(active).icon} size={40} /><div><h1>{screen(active).label}</h1><p>{screen(active).subtitle}</p></div><span className={`access-badge access-${profile.access}`}>{accessBadge}</span></div>}
       {content}
     </main>
   </div>
