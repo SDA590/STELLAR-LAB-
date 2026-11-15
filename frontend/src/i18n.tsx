@@ -45,6 +45,11 @@ export function missionDay(now = Date.now()) {
   return String(Math.max(1, Math.floor((now - MISSION_START) / 86400000) + 1)).padStart(3, '0')
 }
 
+/** Etiqueta del nodo: "NODO 1" si el ESP32 está enviando, "SIM" si no. */
+export function nodeTag(node: number | undefined, live: boolean) {
+  return live ? `${t('NODO', 'NODE')} ${node ?? '?'}` : 'SIM'
+}
+
 // Etiquetas que el backend envía como códigos.
 export function bpLabel(code?: string | null) {
   return ({ normal: t('normal', 'normal'), elevada: t('elevada', 'elevated'), alta: t('alta', 'high'), baja: t('baja', 'low') } as Record<string, string>)[code ?? ''] ?? (code ?? '')

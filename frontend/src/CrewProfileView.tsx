@@ -22,7 +22,7 @@ export default function CrewProfileView({ profile, sample, baseline, vitals }: {
     <article className="panel profile-hero" style={{ '--profile-accent': profile.accent } as React.CSSProperties}>
       {profile.photo ? <img src={profile.photo} alt="" /> : <div className="ini">{profile.initials}</div>}
       <div><span>{t('TRIPULANTE', 'CREW MEMBER')} · STELLAR-01</span><h2>{profile.name}</h2><p>{roleLabel(profile.role)} · {profile.agency}</p>
-        <div className="profile-chips"><em>{t('Día de misión', 'Mission day')} {missionDay()}</em><em>{t('Nodo', 'Node')} {sample?.device_id ?? '—'}</em><em className={hw ? 'real' : ''}>{hw ? t('ESP32 conectado', 'ESP32 connected') : t('Datos simulados', 'Simulated data')}</em></div></div>
+        <div className="profile-chips"><em>{t('Día de misión', 'Mission day')} {missionDay()}</em><em>{t('Nodo', 'Node')} {profile.node ?? '—'}{hw && sample?.device_id ? ` · ${sample.device_id}` : ''}</em><em className={hw ? 'real' : ''}>{hw ? t('ESP32 conectado', 'ESP32 connected') : t('Nodo sin señal · datos simulados', 'Node offline · simulated data')}</em></div></div>
     </article>
 
     <div className="profile-grid">

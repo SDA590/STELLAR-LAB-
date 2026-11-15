@@ -187,36 +187,45 @@ def vitals_item(ts: float, source: str, sys_: float | None, dia: float | None, t
 
 
 # --------------------------------------------------------------------------- #
-# Posición respecto a la estación (punto 0) para la vista 3D (punto 5 del plan)
+# Posición DENTRO DE LA CABINA (cápsula tipo Orion) para la vista 3D
 # --------------------------------------------------------------------------- #
-EVA_PERIOD_S = 600        # una salida simulada completa (ida y vuelta) cada 10 min
-SAFE_DISTANCE_M = 15      # zona cercana
-TETHER_LIMIT_M = 25       # largo del cable de seguridad (referencia de la demo)
+# Punto 0 = centro del espacio habitable de la cabina (~2 m de diámetro × ~2 m de alto).
+# X = hacia adelante (paneles), Y = hacia los lados, Z = hacia arriba (escotilla).
+CABIN_HALF_M = 1.0        # radio y media altura de la cabina (~2 m de lado a lado)
+NEAR_WALL_M = 0.75        # a menos de 25 cm de una pared
+CABIN_PERIOD_S = 120      # movimiento simulado: un recorrido por la cabina cada 2 min
+# (se mantienen los nombres viejos por compatibilidad con la API)
+SAFE_DISTANCE_M = NEAR_WALL_M
+TETHER_LIMIT_M = CABIN_HALF_M
 
 
 def eva_position(phase: float, ts: float) -> tuple[float, float, float]:
-    """Trayectoria SIMULADA de una caminata espacial (EVA): sale de la escotilla,
-    se aleja hasta ~22 m y vuelve. Siempre da lo mismo para el mismo instante."""
-    u = (ts % EVA_PERIOD_S) / EVA_PERIOD_S
-    r = 3 + 19 * sin(pi * u) ** 2
-    angle = phase + 0.9 * sin(2 * pi * u)
-    x = r * cos(angle)
-    y = r * sin(angle)
-    z = 2.5 * sin(4 * pi * u + phase) + 0.15 * r
+    """Movimiento SIMULADO del astronauta flotando dentro de la cabina (no sale de los 2 × 2 m).
+    Siempre da lo mismo para el mismo instante."""
+    u = (ts % CABIN_PERIOD_S) / CABIN_PERIOD_S
+    x = 0.45 * sin(2 * pi * u + phase) + 0.12 * sin(6 * pi * u)
+    y = 0.4 * sin(4 * pi * u + phase / 2)
+    z = -0.2 + 0.35 * sin(2 * pi * u + phase + 1)
     return round(x, 2), round(y, 2), round(z, 2)
 
 
-def distance_zone(distance: float) -> str:
-    if distance <= SAFE_DISTANCE_M:
-        return "cerca"
-    if distance <= TETHER_LIMIT_M:
-        return "atencion"
-    return "fuera"
+def edge_distance(x: float, y: float, z: float) -> float:
+    """Qué tan cerca está de la pared, el piso o el techo de la cabina (cilindro de ~2 m de
+    diámetro y ~2 m de alto): 1,0 = tocándolos."""
+    return max(sqrt(x * x + y * y), abs(z))
+
+
+def distance_zone(edge: float) -> str:
+    if edge <= NEAR_WALL_M:
+        return "cerca"      # dentro de la cabina
+    if edge <= CABIN_HALF_M:
+        return "atencion"   # junto a una pared
+    return "fuera"          # fuera de la cabina: la estimación se desvió
 
 
 def position_track(samples: list[dict], phase: float, demo: bool, sim_fn=None) -> dict:
-    """Posición actual + estela. Usa la posición del ESP32 si la envía; si no (o en modo
-    demo), la trayectoria simulada. Siempre dice de dónde sale el dato."""
+    """Posición actual + estela dentro de la cabina. Usa la posición del ESP32 si la envía; si no (o en modo
+    demo), el movimiento simulado. Siempre dice de dónde sale el dato."""
     import time
     points = []
     end = floor(time.time())
@@ -241,8 +250,10 @@ def position_track(samples: list[dict], phase: float, demo: bool, sim_fn=None) -
         "distance_m": round(distance, 2),
         "speed_m_s": round(speed, 2) if speed is not None else None,
         "max_distance_m": round(max((sqrt(p["x"] ** 2 + p["y"] ** 2 + p["z"] ** 2) for p in points), default=0), 2),
-        "zone": distance_zone(distance),
+        "edge_m": round(edge_distance(last["x"], last["y"], last["z"]), 2),
+        "zone": distance_zone(edge_distance(last["x"], last["y"], last["z"])),
         "safe_m": SAFE_DISTANCE_M,
         "tether_m": TETHER_LIMIT_M,
+        "cabin_half_m": CABIN_HALF_M,
         "trail": [[p["x"], p["y"], p["z"]] for p in points],
     }
