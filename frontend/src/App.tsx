@@ -16,14 +16,14 @@ import HealthAnalytics from './HealthAnalytics'
 import CrewProfileView from './CrewProfileView'
 import DemoPanel from './DemoPanel'
 import { Line, type Sample } from './charts'
-import { bpLabel, LangSwitch, locale, missionDay, roleLabel, t, tempLabel, useLang } from './i18n'
+import { bpLabel, LangSwitch, nodeTag, locale, missionDay, roleLabel, t, tempLabel, useLang } from './i18n'
 
 // Pantallas: la clave interna sigue en inglés; el texto visible depende del idioma.
 function screens(): Record<string, { label: string; icon: IconName; subtitle: string }> {
   return {
     Dashboard: { label: t('Panel principal', 'Dashboard'), icon: 'inicio', subtitle: t('Tu salud frente a tu propia línea base', 'Your health against your own baseline') },
     Monitoring: { label: t('Monitorización', 'Monitoring'), icon: 'monitorizacion', subtitle: t('Señales crudas del STELLAR Node en vivo y calidad de señal', 'Live raw signals from the STELLAR Node and signal quality') },
-    EVA: { label: t('Posición EVA', 'EVA position'), icon: 'cohete', subtitle: t('Dónde estás respecto a la estación, en 3D y en tiempo real', 'Where you are relative to the station, in 3D and in real time') },
+    EVA: { label: t('Posición en cabina', 'Cabin position'), icon: 'cohete', subtitle: t('Dónde estás dentro de la cápsula (≈ 2 × 2 m), en 3D y en tiempo real', 'Where you are inside the capsule (≈ 2 × 2 m), in 3D and in real time') },
     Wellness: { label: t('Bienestar', 'Wellness'), icon: 'bienestar', subtitle: t('Tu equilibrio en la misión: chequeo diario y recuperación', 'Your balance on the mission: daily check-in and recovery') },
     'Exercise Coach': { label: t('Entrenamiento', 'Training'), icon: 'entrenamiento', subtitle: t('Rutinas guiadas contra la pérdida de músculo y hueso', 'Guided routines against muscle and bone loss') },
     'Crew Profile': { label: t('Mi perfil', 'My profile'), icon: 'perfil', subtitle: t('Quién eres, tus sensores y tu normal', 'Who you are, your sensors and your normal') },
@@ -117,7 +117,9 @@ export default function App() {
   const movement = series.map(s => s.ax == null || s.ay == null || s.az == null ? null : Math.sqrt(s.ax ** 2 + s.ay ** 2 + s.az ** 2))
   const overall = levelInfo(baseline?.level)
   const bp = vitals?.latest_bp, temp = vitals?.latest_temp
-  const sourceTag = (source?: string) => source === 'manual' ? 'MANUAL' : source === 'hardware' ? 'ESP32' : t('SIMULADO', 'SIMULATED')
+  const live = sample?.source === 'hardware'
+  const nodeName = `${t('Nodo', 'Node')} ${profile?.node ?? '?'}`
+  const sourceTag = (source?: string) => source === 'manual' ? 'MANUAL' : source === 'hardware' ? nodeTag(profile?.node, true) : t('SIMULADO', 'SIMULATED')
   const issues = [hrBase, rrBase].filter(s => s && ['observe', 'alert', 'unreliable'].includes(s.level)) as SignalBaseline[]
 
   if (!profile) return <ProfilePicker profiles={profiles} onSelect={selected => { setProfile(selected); setActive(selected.access === 'nasa' ? 'Mission Control' : 'Dashboard') }} />
@@ -152,8 +154,8 @@ export default function App() {
     <section className="intro"><div><span>{profile.name.toUpperCase()} · {role.toUpperCase()} · {t('DÍA DE MISIÓN', 'MISSION DAY')} {missionDay()}</span><h2>{t('Hola', 'Hello')}, {profile.shortName}</h2><p>{t('Pulso, respiración y movimiento comparados con tu propia línea base.', 'Heart rate, breathing and movement compared with your own baseline.')}</p></div><div className={`risk level-${maxLevel >= 3 ? 'alert' : maxLevel === 2 ? 'observe' : baseline?.level ?? 'calibrating'}`}><i /> {t('Estado actual', 'Current status')} <strong>{maxLevel >= 3 ? t('CRÍTICO · NIVEL 3', 'CRITICAL · LEVEL 3') : maxLevel === 2 ? t('ATENCIÓN · NIVEL 2', 'ATTENTION · LEVEL 2') : overall.label.toUpperCase()}</strong></div></section>
 
     <section className="metrics six">
-      <Metric icon="corazon" label={t('Frecuencia cardiaca', 'Heart rate')} value={hr ?? '—'} unit={` ${t('lpm', 'bpm')}`} note={signalNote(hrBase)} tone={levelInfo(hrBase?.level).tone} tag={levelInfo(hrBase?.level).short} />
-      <Metric icon="pulmones" label={t('Frecuencia respiratoria', 'Breathing rate')} value={respirationRate?.toFixed(1) ?? '—'} unit={` ${t('rpm', 'br/min')}`} note={signalNote(rrBase)} tone={levelInfo(rrBase?.level).tone} tag={levelInfo(rrBase?.level).short} />
+      <Metric icon="corazon" label={t('Frecuencia cardiaca', 'Heart rate')} value={hr ?? '—'} unit={` ${t('lpm', 'bpm')}`} note={signalNote(hrBase)} tone={levelInfo(hrBase?.level).tone} tag={nodeTag(profile.node, live)} />
+      <Metric icon="pulmones" label={t('Frecuencia respiratoria', 'Breathing rate')} value={respirationRate?.toFixed(1) ?? '—'} unit={` ${t('rpm', 'br/min')}`} note={signalNote(rrBase)} tone={levelInfo(rrBase?.level).tone} tag={nodeTag(profile.node, live)} />
       <Metric icon="gota" label={t('Presión arterial', 'Blood pressure')} value={bp ? `${bp.systolic_mmhg}/${bp.diastolic_mmhg ?? '—'}` : '—'} unit=" mmHg" note={bp ? `${bpLabel(bp.bp_label)} · ${sourceTag(bp.source).toLowerCase()} ${timeLabel(bp.ts)}` : t('Sin medición', 'No reading')} tone={bp?.bp_label === 'normal' ? 'mint' : 'amber'} tag={bp ? sourceTag(bp.source) : undefined} />
       <Metric icon="termometro" label={t('Temperatura', 'Temperature')} value={temp?.temperature_c?.toFixed(1) ?? '—'} unit=" °C" note={temp ? `${tempLabel(temp.temp_label)} · ${sourceTag(temp.source).toLowerCase()} ${timeLabel(temp.ts)}` : t('Sin medición', 'No reading')} tone={temp?.temp_label === 'normal' ? 'cyan' : temp?.temp_label === 'fiebre' ? 'red' : 'amber'} tag={temp ? sourceTag(temp.source) : undefined} />
       <Metric icon="senal" label={t('Señal ECG', 'ECG signal')} value={sample?.leads_off ? 'OFF' : (sample?.ecg_raw ?? '—')} unit=" raw" note={sample?.leads_off ? t('Lectura poco confiable: revisa los electrodos', 'Unreliable reading: check the electrodes') : t('Electrodos detectados', 'Electrodes detected')} tone={sample?.leads_off ? 'gray' : 'blue'} />
@@ -165,8 +167,8 @@ export default function App() {
       <article className="panel trend-panel"><div className="panel-head"><div><span>{t('RESPIRACIÓN · TU LÍNEA BASE', 'BREATHING · YOUR BASELINE')}</span><h3>{t('Respiración vs. tu normal', 'Breathing vs. your normal')}</h3></div><b className={`level-pill level-${rrBase?.level ?? 'calibrating'}`}>{levelInfo(rrBase?.level).label}</b></div><Line values={rrSeries} band={rrBase ?? undefined} color="#56d9ef" /><div className="chart-meta"><span>{t('VENTANA', 'WINDOW')} · {series.length} s</span><span>{rrBase?.center != null ? `BASE ${rrBase.center} ± ${(2 * (rrBase.sd ?? 0)).toFixed(1)} ${t('rpm', 'br/min')}` : t('CALIBRANDO', 'CALIBRATING')}</span><span>{rrBase?.z != null ? `z = ${rrBase.z}` : '—'}</span></div></article>
       <article className="panel ecg-panel"><div className="panel-head"><div><span>ECG / AD8232</span><h3>{t('Actividad cardiaca', 'Cardiac activity')}</h3></div><b className="live"><i /> LIVE</b></div><Line values={ecg} /><div className="chart-meta"><span>{t('VENTANA', 'WINDOW')} · {series.length} s</span><span>ADC · 12 bit</span><span>{sample?.leads_off ? t('ELECTRODOS SUELTOS', 'LEADS OFF') : t('SEÑAL ACTIVA', 'SIGNAL ACTIVE')}</span></div></article>
       <article className="panel respiration-panel"><div className="panel-head"><div><span>{t('RESPIRACIÓN · DERIVADA DEL ECG', 'BREATHING · ECG-DERIVED')}</span><h3>{t('Ciclo de respiración', 'Breathing cycle')}</h3></div><b>{respirationRate?.toFixed(1) ?? '—'} {t('rpm', 'br/min')}</b></div><Line values={respiration} color="#56d9ef" /><div className="chart-meta"><span>{t('ESTIMADA DESDE EL ECG (EDR)', 'ESTIMATED FROM THE ECG (EDR)')}</span><span>{sample?.source === 'hardware' ? 'ESP32' : t('SIMULACIÓN', 'SIMULATION')}</span><span>{levelInfo(rrBase?.level).label.toUpperCase()}</span></div></article>
-      <article className="panel footprint eva-mini"><div className="panel-head"><div><span>{t('POSICIÓN · PUNTO 0 = ESTACIÓN', 'POSITION · POINT 0 = STATION')}</span><h3>{t('Distancia a la estación', 'Distance to the station')}</h3></div><b>{distance != null ? `${distance.toFixed(1)} m` : '—'}</b></div>
-        <div className="eva-mini-body"><Icon name="cohete" size={46} /><div><p>X <b>{sample?.pos_x_m?.toFixed(1) ?? '—'}</b> · Y <b>{sample?.pos_y_m?.toFixed(1) ?? '—'}</b> · Z <b>{sample?.pos_z_m?.toFixed(1) ?? '—'}</b> m</p><p>{sample?.source === 'hardware' ? t('Estimada por el ESP32 con el MPU6050.', 'Estimated by the ESP32 with the MPU6050.') : t('Trayectoria simulada de una caminata espacial.', 'Simulated spacewalk path.')}</p></div></div>
+      <article className="panel footprint eva-mini"><div className="panel-head"><div><span>{t('POSICIÓN · PUNTO 0 = CENTRO DE LA CABINA', 'POSITION · POINT 0 = CABIN CENTRE')}</span><h3>{t('Posición en la cabina', 'Position in the cabin')}</h3></div><b>{distance != null ? `${distance.toFixed(2)} m` : '—'}</b></div>
+        <div className="eva-mini-body"><Icon name="cohete" size={46} /><div><p>X <b>{sample?.pos_x_m?.toFixed(2) ?? '—'}</b> · Y <b>{sample?.pos_y_m?.toFixed(2) ?? '—'}</b> · Z <b>{sample?.pos_z_m?.toFixed(2) ?? '—'}</b> m</p><p>{sample?.source === 'hardware' ? t('Estimada por el ESP32 con el MPU6050.', 'Estimated by the ESP32 with the MPU6050.') : t('Movimiento simulado dentro de la cápsula.', 'Simulated movement inside the capsule.')}</p></div></div>
         <button className="link-btn" onClick={() => setActive('EVA')}>{t('Ver en 3D', 'View in 3D')}<Icon name="flecha-derecha" size={14} /></button></article>
       <article className="panel motion"><div className="panel-head"><div><span>{t('MOVIMIENTO', 'MOVEMENT')}</span><h3>{t('Aceleración del pie', 'Foot acceleration')}</h3></div><b>{hasImu && sample ? Math.sqrt((sample.ax ?? 0) ** 2 + (sample.ay ?? 0) ** 2 + (sample.az ?? 0) ** 2).toFixed(2) : '—'} m/s²</b></div><Line values={movement} color="#ffb55c" /><div className="vectors"><span>AX <b>{sample?.ax?.toFixed(2) ?? '—'}</b></span><span>AY <b>{sample?.ay?.toFixed(2) ?? '—'}</b></span><span>AZ <b>{sample?.az?.toFixed(2) ?? '—'}</b></span></div></article>
       <article className={`panel insight level-${topAlert ? (topAlert.level >= 3 ? 'alert' : topAlert.level === 2 ? 'observe' : baseline?.level ?? 'normal') : baseline?.level ?? 'calibrating'}`}><span>{t('STELLAR AI · EVALUAR Y ACTUAR', 'STELLAR AI · EVALUATE AND ACT')}</span>
@@ -184,7 +186,7 @@ export default function App() {
       <div className="brand"><img src="/brand/logo-cian.svg" alt="" /><b>STELLAR<em>Health</em></b></div>
       <nav>{nav.map(navButton)}</nav>
       {authorized.length > 0 && <><p className="nav-section">{t('PERSONAL AUTORIZADO', 'AUTHORIZED STAFF')}</p><nav>{authorized.map(navButton)}</nav></>}
-      <div className="sync-card"><div><b className={connected ? '' : 'off'}><i />{connected ? (sample?.source === 'hardware' ? t('ESP32 conectado', 'ESP32 connected') : t('Conectado · simulación', 'Connected · simulation')) : profile.access === 'nasa' ? t('Estación de Tierra', 'Ground station') : t('Sin conexión', 'Offline')}</b>{lastSync != null && <span>{t(`Última lectura: hace ${lastSync} s`, `Last reading: ${lastSync} s ago`)}</span>}</div><Icon name="senal" size={22} /></div>
+      <div className="sync-card"><div><b className={connected ? '' : 'off'}><i />{connected ? (live ? t(`${nodeName} conectado`, `${nodeName} connected`) : t(`${nodeName} sin señal · simulación`, `${nodeName} no signal · simulation`)) : profile.access === 'nasa' ? t('Estación de Tierra', 'Ground station') : t('Sin conexión', 'Offline')}</b>{lastSync != null && <span>{live && sample?.device_id ? `${sample.device_id} · ` : ''}{t(`hace ${lastSync} s`, `${lastSync} s ago`)}</span>}</div><Icon name="senal" size={22} /></div>
       <p className="version">STELLAR LAB · v0.5 · {t('No es un dispositivo médico', 'Not a medical device')}</p>
     </aside>
 
@@ -192,7 +194,7 @@ export default function App() {
       <div className="topbar">
         <div className="mission"><Icon name="cohete" size={26} /><div><b>{t('Misión', 'Mission')} STELLAR-01</b><small>{t(`Día ${missionDay()} · larga duración`, `Day ${missionDay()} · long duration`)}</small></div></div>
         <span className="divider" />
-        <span className={`sys ${!connected && profile.access !== 'nasa' ? 'off' : sample?.source === 'hardware' ? '' : 'sim'}`}><i />{profile.access === 'nasa' ? t('Enlace con el hábitat', 'Habitat link') : !connected ? t('API desconectada', 'API offline') : sample?.source === 'hardware' ? t('Sistema en línea · ESP32', 'System online · ESP32') : t('Sistema en línea · simulación', 'System online · simulation')}</span>
+        <span className={`sys ${!connected && profile.access !== 'nasa' ? 'off' : sample?.source === 'hardware' ? '' : 'sim'}`}><i />{profile.access === 'nasa' ? t('Enlace con el hábitat', 'Habitat link') : !connected ? t('API desconectada', 'API offline') : live ? t(`Sistema en línea · ${nodeName} (ESP32)`, `System online · ${nodeName} (ESP32)`) : t('Sistema en línea · simulación', 'System online · simulation')}</span>
         <span className="divider" />
         <span className="clock"><Icon name="reloj" size={18} />{clock.toISOString().slice(11, 16)} UTC</span>
         <span className="spacer" />

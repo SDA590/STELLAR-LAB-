@@ -11,7 +11,7 @@ const scenarios = () => [
   { id: 'stress', icon: '≋', title: t('Estrés', 'Stress'), text: t('Pulso y respiración altos + tensión 5/5', 'High heart rate and breathing + stress 5/5') },
   { id: 'fever', icon: '🌡', title: t('Fiebre', 'Fever'), text: t('38,6 °C + pulso alto → nivel 3 y reporte a Tierra', '38.6 °C + high heart rate → level 3 and Earth report') },
   { id: 'leads_off', icon: '⚡', title: t('Electrodos sueltos', 'Loose electrodes'), text: t('Lectura poco confiable', 'Unreliable reading') },
-  { id: 'eva_far', icon: '🚀', title: t('Lejos de la estación', 'Far from station'), text: t('La EVA pasa de 25 m (cable)', 'EVA goes beyond 25 m (tether)') },
+  { id: 'drift', icon: '🧭', title: t('Posición desviada', 'Position drift'), text: t('La estimación del MPU6050 sale de la cabina → recalibrar', 'The MPU6050 estimate leaves the cabin → recalibrate') },
 ]
 
 /** Botón "Demo" de la barra superior: provoca cambios en la SIMULACIÓN para mostrar las alertas. */

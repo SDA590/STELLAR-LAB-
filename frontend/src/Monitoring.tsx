@@ -2,6 +2,7 @@ import { Line, type Sample } from './charts'
 import type { Baseline } from './health'
 import { levelInfo } from './health'
 import { locale, t } from './i18n'
+import { nodeNumber } from './profiles'
 
 // Monitorización = vista técnica EN VIVO de lo que manda el STELLAR Node (señales crudas,
 // calidad de señal y el último paquete). El Panel principal, en cambio, resume y explica.
@@ -26,7 +27,7 @@ export default function Monitoring({ sample, series, baseline, lastSync }: { sam
 
   return <section className="monitor-page">
     <div className="monitor-strip">
-      <span className={`src ${hw ? 'real' : ''}`}><i />{hw ? t('ESP32 EN VIVO', 'LIVE ESP32') : t('SIMULACIÓN', 'SIMULATION')}</span>
+      <span className={`src ${hw ? 'real' : ''}`}><i />{hw ? t(`NODO ${nodeNumber(sample!.astronaut_id)} EN VIVO`, `NODE ${nodeNumber(sample!.astronaut_id)} LIVE`) : t('SIMULACIÓN', 'SIMULATION')}</span>
       <span>{t('Dispositivo', 'Device')} <b>{sample?.device_id ?? '—'}</b></span>
       <span>{t('Última lectura', 'Last reading')} <b>{lastSync != null ? t(`hace ${lastSync} s`, `${lastSync} s ago`) : '—'}</b></span>
       <span>{t('Batería', 'Battery')} <b>{sample?.battery_pct != null ? `${sample.battery_pct} %` : '—'}</b></span>
