@@ -10,6 +10,8 @@ type CrewMetric = {
   movement_score: number
   recovery_score: number
   status: 'Stable' | 'Observe'
+  level?: string
+  reasons?: string[]
   received_at: string
 }
 
@@ -54,7 +56,7 @@ export default function CrewCommand({ crew }: { crew: CrewProfile[] }) {
       <article className="crew-vitals"><div className="detail-title">{profile.photo ? <img className="detail-avatar" src={profile.photo} alt="" /> : <div className="detail-avatar">{profile.initials}</div>}<div><span>SELECTED CREW MEMBER</span><h3>{profile.name}</h3><p>{profile.role} · {profile.agency} · {metric.source === 'hardware' ? 'LIVE ESP32' : 'SIMULATION'}</p></div><b>MISSION DAY 042</b></div>
         <div className="detail-metrics"><div><span>Heart rate</span><b>{metric.heart_rate_bpm ?? '—'}<small>bpm</small></b><i style={{width:`${metric.heart_rate_bpm ?? 0}%`}}/></div><div><span>Respiration</span><b>{metric.respiration_rate_bpm?.toFixed(1) ?? '—'}<small>rpm</small></b><i style={{width:`${(metric.respiration_rate_bpm ?? 0) * 4}%`}}/></div><div><span>Movement score</span><b>{metric.movement_score}<small>%</small></b><i style={{width:`${metric.movement_score}%`}}/></div><div><span>Recovery index</span><b>{metric.recovery_score}<small>%</small></b><i style={{width:`${metric.recovery_score}%`}}/></div></div>
       </article>
-      <aside className="command-analysis"><span>STELLAR ANALYSIS</span><h3>{metric.status === 'Stable' ? 'No relevant deviations' : 'Recovery trend requires observation'}</h3><p>{metric.status === 'Stable' ? 'Cardiac, respiratory and movement indicators remain within the demonstration baseline.' : 'One or more readings are outside the personal demonstration baseline. Re-evaluate after the scheduled recovery period.'}</p><ul><li><i/>Telemetry {metric.source === 'hardware' ? 'received from ESP32' : 'simulated locally'}</li><li><i/>Respiratory signal active</li><li><i className={metric.status === 'Stable' ? '' : 'watch'}/>{metric.status === 'Stable' ? 'Routine completed' : 'Follow-up pending'}</li></ul><div>READ-ONLY CREW VIEW</div></aside>
+      <aside className="command-analysis"><span>STELLAR ANALYSIS</span><h3>{metric.status === 'Stable' ? 'No relevant deviations' : 'Recovery trend requires observation'}</h3><p>{metric.status === 'Stable' ? 'Cardiac and respiratory indicators remain within this crew member’s personal baseline (median of the last 10 min).' : (metric.reasons?.length ? metric.reasons.join(' ') : 'One or more readings are outside the personal baseline.') + ' Re-evaluate after the scheduled recovery period.'}</p><ul><li><i/>Telemetry {metric.source === 'hardware' ? 'received from ESP32' : 'simulated locally'}</li><li><i/>Respiratory signal active</li><li><i className={metric.status === 'Stable' ? '' : 'watch'}/>{metric.status === 'Stable' ? 'Routine completed' : 'Follow-up pending'}</li></ul><div>READ-ONLY CREW VIEW</div></aside>
     </div>
   </section>
 }
